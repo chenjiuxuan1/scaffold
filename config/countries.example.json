@@ -1,0 +1,50 @@
+{
+  "cn": {
+    "base_url": "http://10.20.47.14:12345/dolphinscheduler",
+    "project_code": "158514956085248",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  },
+  "ph": {
+    "base_url": "http://your-ph-ds-host:12345/dolphinscheduler",
+    "project_code": "replace_me",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  },
+  "th": {
+    "base_url": "http://your-th-ds-host:12345/dolphinscheduler",
+    "project_code": "replace_me",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  },
+  "pk": {
+    "base_url": "http://your-pk-ds-host:12345/dolphinscheduler",
+    "project_code": "replace_me",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  },
+  "mx": {
+    "base_url": "http://your-mx-ds-host:12345/dolphinscheduler",
+    "project_code": "replace_me",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  },
+  "ine": {
+    "base_url": "http://your-ine-ds-host:12345/dolphinscheduler",
+    "project_code": "replace_me",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  }
+}

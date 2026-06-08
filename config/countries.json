@@ -1,0 +1,10 @@
+{
+  "cn": {
+    "base_url": "http://10.20.47.14:12345/dolphinscheduler",
+    "project_code": "158514956085248",
+    "tenant_code": "default",
+    "worker_group": "default",
+    "environment_code": "",
+    "queue": ""
+  }
+}
