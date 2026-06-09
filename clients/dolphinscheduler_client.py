@@ -155,6 +155,8 @@ class DolphinSchedulerClient:
             "execType": "START_PROCESS",
             "dryRun": "0",
         }
+        if self.config.queue:
+            form["queue"] = self.config.queue
         if payload.get("start_node_list"):
             form["startNodeList"] = payload["start_node_list"]
         custom_params = payload.get("custom_params") or {}

@@ -83,8 +83,17 @@ export DS_COUNTRIES_CONFIG=/root/ds-scheduler-gateway/config/countries.json
 - `pk`
 - `th`
 
-其中 `trigger_workflow` 依赖的 `environment_code` / `tenant_code` / `start_endpoint` / `start_code_field`
-也已经预置到统一配置里，便于按国家兜底。
+其中 `trigger_workflow` 依赖的 `environment_code` / `tenant_code` / `worker_group` /
+`start_endpoint` / `start_code_field` 现在支持多层覆盖，优先级如下：
+
+1. 请求 payload 显式传入
+2. `workflow_overrides[workflow_code]`
+3. `project_overrides[project_code]`
+4. `action_overrides[action]`
+5. 国家默认配置
+
+这样做的目的是兼容“同一个国家里，不同工作流或不同触发方式使用不同运行参数”的情况，
+同时不影响你现有的 n8n 调用方式。
 
 ## 当前内置国家配置来源
 

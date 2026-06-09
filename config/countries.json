@@ -4,44 +4,100 @@
     "project_code": "158514956085248",
     "tenant_code": "dolphinscheduler",
     "worker_group": "default",
-    "environment_code": "154818922491872",
+    "environment_code": "-1",
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "auto",
-    "start_code_field": "auto"
+    "start_code_field": "auto",
+    "action_overrides": {
+      "trigger_workflow": {
+        "tenant_code": "default",
+        "environment_code": "-1"
+      }
+    }
   },
   "ine": {
     "base_url": "http://192.168.21.236:12345/dolphinscheduler",
     "project_code": "12739141488160",
-    "tenant_code": "strategy",
+    "tenant_code": "default",
     "worker_group": "default",
-    "environment_code": "12736921369760",
+    "environment_code": "-1",
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "auto",
-    "start_code_field": "auto"
+    "start_code_field": "auto",
+    "workflow_overrides": {
+      "20343242216898": {
+        "tenant_code": "default",
+        "environment_code": "12736921369760"
+      },
+      "174087815767296": {
+        "tenant_code": "default",
+        "environment_code": "12736921369760"
+      },
+      "174440419485964": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "12736921369760"
+      },
+      "174699310128960": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "12736921369760"
+      },
+      "18092491538888": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "12736921369760"
+      }
+    }
   },
   "mx": {
     "base_url": "http://172.20.220.165:12345/dolphinscheduler",
     "project_code": "13068695921632",
-    "tenant_code": "dolphinscheduler",
+    "tenant_code": "default",
     "worker_group": "default",
-    "environment_code": "154818922491872",
+    "environment_code": "-1",
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "auto",
-    "start_code_field": "auto"
+    "start_code_field": "auto",
+    "workflow_overrides": {
+      "13930032652256": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "12813621425120"
+      },
+      "19834317535463": {
+        "tenant_code": "default",
+        "environment_code": "12813621425120"
+      },
+      "20048471875198": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "12813621425120"
+      }
+    }
   },
   "ph": {
     "base_url": "http://127.0.0.1:12345/dolphinscheduler",
     "project_code": "15843450427744",
-    "tenant_code": "dolphinscheduler",
+    "tenant_code": "default",
     "worker_group": "default",
-    "environment_code": "15843695995616",
+    "environment_code": "-1",
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "auto",
-    "start_code_field": "auto"
+    "start_code_field": "auto",
+    "workflow_overrides": {
+      "15845044782816": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "15843695995616"
+      },
+      "19546420608615": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "15843695995616"
+      },
+      "15845044642912": {
+        "tenant_code": "default",
+        "environment_code": "15843695995616"
+      }
+    }
   },
   "th": {
     "base_url": "http://192.168.20.236:12345/dolphinscheduler",
@@ -52,17 +108,41 @@
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "auto",
-    "start_code_field": "auto"
+    "start_code_field": "auto",
+    "workflow_overrides": {
+      "20091910711168": {
+        "tenant_code": "default",
+        "environment_code": "-1"
+      }
+    }
   },
   "pk": {
     "base_url": "http://10.20.84.176:12345/dolphinscheduler",
     "project_code": "169585666733760",
-    "tenant_code": "dolphinscheduler",
+    "tenant_code": "default",
     "worker_group": "default",
-    "environment_code": "154818922491872",
+    "environment_code": "-1",
     "queue": "",
     "api_mode": "auto",
     "start_endpoint": "start-workflow-instance",
-    "start_code_field": "workflowDefinitionCode"
+    "start_code_field": "workflowDefinitionCode",
+    "workflow_overrides": {
+      "169585683956416": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "-1"
+      },
+      "169585683238592": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "-1"
+      },
+      "169585683021504": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "-1"
+      },
+      "169585682867904": {
+        "tenant_code": "dolphinscheduler",
+        "environment_code": "168885846276832"
+      }
+    }
   }
 }
