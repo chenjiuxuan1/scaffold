@@ -16,5 +16,6 @@ def dispatch_action(client: DolphinSchedulerClient, action: str, payload: Dict[s
         "list_instances": lambda: client.list_instances(payload),
         "get_instance": lambda: client.get_instance(payload),
         "append_sql_task": lambda: client.append_sql_task(payload),
+        "dump_workflow_graph": lambda: client.dump_workflow_graph(payload),
     }
     return handlers[action]()

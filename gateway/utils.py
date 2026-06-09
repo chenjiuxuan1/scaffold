@@ -19,6 +19,7 @@ SUPPORTED_ACTIONS = {
     "list_instances",
     "get_instance",
     "append_sql_task",
+    "dump_workflow_graph",
 }
 
 

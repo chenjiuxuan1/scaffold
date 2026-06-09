@@ -22,6 +22,7 @@
 - `list_instances`
 - `get_instance`
 - `append_sql_task`
+- `dump_workflow_graph`
 
 ## 目录结构
 
@@ -211,4 +212,23 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 
 ```json
 {"project_code":"19427088052704","workflow_code":"174599383687393","task_name":"测试2","sql":"select 2","template_task_name":"dwd_okr_dashboard"}
+```
+
+## 导出工作流图结构
+
+`dump_workflow_graph` 用来排查工作流 DAG 结构问题，返回：
+
+1. `workflow_summary`
+2. `task_definitions`
+3. `task_relations`
+4. `locations`
+5. `raw_workflow_detail`
+
+推荐 payload：
+
+```json
+{
+  "project_code": "19427088052704",
+  "workflow_code": "174599383687393"
+}
 ```

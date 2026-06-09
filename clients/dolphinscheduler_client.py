@@ -106,6 +106,58 @@ class DolphinSchedulerClient:
                 return True, item
         return False, {"message": f"workflow not found by name: {workflow_name}"}
 
+    def dump_workflow_graph(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        ok, workflow_result = self.get_workflow(payload)
+        if not ok:
+            return False, workflow_result
+
+        detail = self._unwrap_workflow_detail(workflow_result)
+        if not detail:
+            return False, {"message": "workflow detail payload is empty", "raw": workflow_result}
+
+        task_definitions = self._extract_json_list(
+            detail,
+            "taskDefinitionList",
+            "taskDefinitionJson",
+            "taskDefinitionJsonObj",
+            "taskDefinitionJsonObject",
+        )
+        task_relations = self._extract_json_list(
+            detail,
+            "processTaskRelationList",
+            "taskRelationJson",
+            "taskRelationJsonObj",
+            "taskRelationJsonObject",
+        )
+        locations = self._extract_json_list(
+            detail,
+            "locations",
+            "locationsJson",
+            "locationsObj",
+            "locationsObject",
+        )
+
+        return True, {
+            "workflow_summary": {
+                "name": detail.get("name") or detail.get("workflowDefinition", {}).get("name"),
+                "project_code": str(payload.get("project_code") or self.config.project_code).strip(),
+                "workflow_code": str(payload.get("workflow_code") or detail.get("code") or "").strip(),
+                "release_state": detail.get("releaseState") or detail.get("scheduleReleaseState") or detail.get("release_state"),
+                "tenant_code": detail.get("tenantCode"),
+                "execution_type": detail.get("executionType"),
+                "timeout": detail.get("timeout"),
+            },
+            "counts": {
+                "task_definition_count": len(task_definitions),
+                "task_relation_count": len(task_relations),
+                "location_count": len(locations),
+            },
+            "task_definitions": task_definitions,
+            "task_relations": task_relations,
+            "locations": locations,
+            "raw_workflow_detail": detail,
+        }
+
     def _resolve_start_endpoint(self) -> str:
         endpoint = (self.config.start_endpoint or "auto").strip()
         if endpoint in ("", "auto"):
