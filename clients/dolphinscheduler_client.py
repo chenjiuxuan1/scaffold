@@ -71,6 +71,18 @@ class DolphinSchedulerClient:
             query=query,
         )
 
+    def list_projects(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        query = {
+            "pageNo": payload.get("page_no", 1),
+            "pageSize": payload.get("page_size", 20),
+            "searchVal": payload.get("search_val", ""),
+        }
+        return self.request(
+            "GET",
+            "/projects",
+            query=query,
+        )
+
     def get_workflow(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = payload.get("project_code") or self.config.project_code
         workflow_code = payload.get("workflow_code")

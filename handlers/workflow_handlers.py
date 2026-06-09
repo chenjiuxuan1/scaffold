@@ -7,6 +7,7 @@ from clients.dolphinscheduler_client import DolphinSchedulerClient
 
 def dispatch_action(client: DolphinSchedulerClient, action: str, payload: Dict[str, Any]) -> Tuple[bool, Any]:
     handlers = {
+        "list_projects": lambda: client.list_projects(payload),
         "list_workflows": lambda: client.list_workflows(payload),
         "get_workflow": lambda: client.get_workflow(payload),
         "online_workflow": lambda: client.release_workflow(payload, "ONLINE"),
