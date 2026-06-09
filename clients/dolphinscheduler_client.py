@@ -115,37 +115,20 @@ class DolphinSchedulerClient:
         if not detail:
             return False, {"message": "workflow detail payload is empty", "raw": workflow_result}
 
-        task_definitions = self._extract_json_list(
-            detail,
-            "taskDefinitionList",
-            "taskDefinitionJson",
-            "taskDefinitionJsonObj",
-            "taskDefinitionJsonObject",
-        )
-        task_relations = self._extract_json_list(
-            detail,
-            "processTaskRelationList",
-            "taskRelationJson",
-            "taskRelationJsonObj",
-            "taskRelationJsonObject",
-        )
-        locations = self._extract_json_list(
-            detail,
-            "locations",
-            "locationsJson",
-            "locationsObj",
-            "locationsObject",
-        )
+        task_definitions = self._get_workflow_task_definitions(detail)
+        task_relations = self._get_workflow_task_relations(detail)
+        locations = self._get_workflow_locations(detail)
+        workflow_meta = self._get_workflow_meta(detail)
 
         return True, {
             "workflow_summary": {
-                "name": detail.get("name") or detail.get("workflowDefinition", {}).get("name"),
+                "name": workflow_meta.get("name"),
                 "project_code": str(payload.get("project_code") or self.config.project_code).strip(),
-                "workflow_code": str(payload.get("workflow_code") or detail.get("code") or "").strip(),
-                "release_state": detail.get("releaseState") or detail.get("scheduleReleaseState") or detail.get("release_state"),
+                "workflow_code": str(payload.get("workflow_code") or workflow_meta.get("code") or "").strip(),
+                "release_state": workflow_meta.get("releaseState") or workflow_meta.get("scheduleReleaseState") or workflow_meta.get("release_state"),
                 "tenant_code": detail.get("tenantCode"),
-                "execution_type": detail.get("executionType"),
-                "timeout": detail.get("timeout"),
+                "execution_type": workflow_meta.get("executionType"),
+                "timeout": workflow_meta.get("timeout"),
             },
             "counts": {
                 "task_definition_count": len(task_definitions),
@@ -287,27 +270,10 @@ class DolphinSchedulerClient:
         if not detail:
             return False, {"message": "workflow detail payload is empty", "raw": workflow_result}
 
-        task_definitions = self._extract_json_list(
-            detail,
-            "taskDefinitionList",
-            "taskDefinitionJson",
-            "taskDefinitionJsonObj",
-            "taskDefinitionJsonObject",
-        )
-        task_relations = self._extract_json_list(
-            detail,
-            "processTaskRelationList",
-            "taskRelationJson",
-            "taskRelationJsonObj",
-            "taskRelationJsonObject",
-        )
-        locations = self._extract_json_list(
-            detail,
-            "locations",
-            "locationsJson",
-            "locationsObj",
-            "locationsObject",
-        )
+        task_definitions = self._get_workflow_task_definitions(detail)
+        task_relations = self._get_workflow_task_relations(detail)
+        locations = self._get_workflow_locations(detail)
+        workflow_meta = self._get_workflow_meta(detail)
         if any(str(item.get("name", "")).strip() == task_name for item in task_definitions):
             return False, {"message": f"task already exists: {task_name}"}
 
@@ -348,9 +314,9 @@ class DolphinSchedulerClient:
         )
 
         original_release_state = str(
-            detail.get("releaseState")
-            or detail.get("scheduleReleaseState")
-            or detail.get("release_state")
+            workflow_meta.get("releaseState")
+            or workflow_meta.get("scheduleReleaseState")
+            or workflow_meta.get("release_state")
             or ""
         ).upper()
         restore_original_state = payload.get("restore_original_state", payload.get("restore_online", True))
@@ -438,8 +404,7 @@ class DolphinSchedulerClient:
     ) -> Dict[str, Any]:
         name = (
             payload.get("workflow_name")
-            or workflow_detail.get("name")
-            or workflow_detail.get("workflowDefinition", {}).get("name")
+            or self._get_workflow_meta(workflow_detail).get("name")
             or ""
         )
         description = (
@@ -455,8 +420,7 @@ class DolphinSchedulerClient:
         timeout = payload.get("timeout")
         if timeout in ("", None):
             timeout = (
-                workflow_detail.get("timeout")
-                or workflow_detail.get("workflowDefinition", {}).get("timeout")
+                self._get_workflow_meta(workflow_detail).get("timeout")
                 or 0
             )
         tenant_code = (
@@ -466,7 +430,7 @@ class DolphinSchedulerClient:
         )
         execution_type = (
             payload.get("execution_type")
-            or workflow_detail.get("executionType")
+            or self._get_workflow_meta(workflow_detail).get("executionType")
             or "PARALLEL"
         )
 
@@ -492,6 +456,71 @@ class DolphinSchedulerClient:
         if isinstance(data, dict):
             return data
         return workflow_result
+
+    def _get_workflow_meta(self, detail: Dict[str, Any]) -> Dict[str, Any]:
+        workflow_meta = detail.get("workflowDefinition")
+        if isinstance(workflow_meta, dict):
+            return workflow_meta
+        return detail
+
+    def _get_workflow_task_definitions(self, detail: Dict[str, Any]) -> list[Dict[str, Any]]:
+        direct = self._extract_json_list(
+            detail,
+            "taskDefinitionList",
+            "taskDefinitionJson",
+            "taskDefinitionJsonObj",
+            "taskDefinitionJsonObject",
+        )
+        if direct:
+            return direct
+        nested = detail.get("workflowDefinition") or {}
+        return self._extract_json_list(
+            nested,
+            "taskDefinitionList",
+            "taskDefinitionJson",
+            "taskDefinitionJsonObj",
+            "taskDefinitionJsonObject",
+        )
+
+    def _get_workflow_task_relations(self, detail: Dict[str, Any]) -> list[Dict[str, Any]]:
+        direct = self._extract_json_list(
+            detail,
+            "workflowTaskRelationList",
+            "processTaskRelationList",
+            "taskRelationJson",
+            "taskRelationJsonObj",
+            "taskRelationJsonObject",
+        )
+        if direct:
+            return direct
+        nested = detail.get("workflowDefinition") or {}
+        return self._extract_json_list(
+            nested,
+            "workflowTaskRelationList",
+            "processTaskRelationList",
+            "taskRelationJson",
+            "taskRelationJsonObj",
+            "taskRelationJsonObject",
+        )
+
+    def _get_workflow_locations(self, detail: Dict[str, Any]) -> list[Dict[str, Any]]:
+        direct = self._extract_json_list(
+            detail,
+            "locations",
+            "locationsJson",
+            "locationsObj",
+            "locationsObject",
+        )
+        if direct:
+            return direct
+        nested = detail.get("workflowDefinition") or {}
+        return self._extract_json_list(
+            nested,
+            "locations",
+            "locationsJson",
+            "locationsObj",
+            "locationsObject",
+        )
 
     def _extract_json_list(self, source: Dict[str, Any], *keys: str) -> list[Dict[str, Any]]:
         for key in keys:
