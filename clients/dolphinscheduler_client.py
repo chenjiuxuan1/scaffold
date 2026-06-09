@@ -291,6 +291,8 @@ class DolphinSchedulerClient:
             new_task=new_task,
             project_code=project_code,
             workflow_code=workflow_code,
+            template_task=template,
+            payload=payload,
         )
 
         original_release_state = str(
@@ -324,6 +326,11 @@ class DolphinSchedulerClient:
         ok, update_result = self._update_workflow_definition(project_code, workflow_code, update_form)
         if not ok:
             return False, update_result
+        if not self._is_ds_success(update_result):
+            return False, {
+                "message": "workflow update rejected by dolphinscheduler",
+                "result": update_result,
+            }
 
         restore_result = None
         if was_online and restore_original_state:
@@ -538,11 +545,19 @@ class DolphinSchedulerClient:
         new_task: Dict[str, Any],
         project_code: str,
         workflow_code: str,
+        template_task: Dict[str, Any],
+        payload: Dict[str, Any],
     ) -> list[Dict[str, Any]]:
         updated = deepcopy(task_relations)
         existing_codes = [self._safe_int(item.get("code")) for item in updated]
         new_task_code = self._safe_int(new_task.get("code"))
-        upstream_codes = self._leaf_task_codes(task_relations, task_definitions)
+
+        upstream_codes = self._resolve_upstream_codes(
+            task_relations=task_relations,
+            task_definitions=task_definitions,
+            template_task=template_task,
+            payload=payload,
+        )
         if not upstream_codes:
             upstream_codes = [0]
         skeleton = deepcopy(updated[0]) if updated else {}
@@ -561,6 +576,29 @@ class DolphinSchedulerClient:
             existing_codes.append(relation["code"])
             updated.append(relation)
         return updated
+
+    def _resolve_upstream_codes(
+        self,
+        task_relations: list[Dict[str, Any]],
+        task_definitions: list[Dict[str, Any]],
+        template_task: Dict[str, Any],
+        payload: Dict[str, Any],
+    ) -> list[int]:
+        explicit_code = self._safe_int(payload.get("upstream_task_code"))
+        if explicit_code > 0:
+            return [explicit_code]
+
+        explicit_name = str(payload.get("upstream_task_name") or "").strip()
+        if explicit_name:
+            for item in task_definitions:
+                if str(item.get("name", "")).strip() == explicit_name:
+                    return [self._safe_int(item.get("code"))]
+
+        template_code = self._safe_int(template_task.get("code"))
+        if template_code > 0:
+            return [template_code]
+
+        return self._leaf_task_codes(task_relations, task_definitions)
 
     def _leaf_task_codes(
         self,
@@ -618,3 +656,15 @@ class DolphinSchedulerClient:
         candidate = max(current_max + 1, int(datetime.now().timestamp() * 1000))
         candidate += random.randint(100, 999)
         return candidate
+
+    def _is_ds_success(self, result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is False:
+            return False
+        if result.get("failed") is True:
+            return False
+        code = result.get("code")
+        if code not in (None, 0, "0"):
+            return False
+        return True
