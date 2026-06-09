@@ -182,7 +182,7 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 2. 继承它的 datasource / tenant / worker / environment 等运行参数
 3. 追加一个新的 SQL 任务节点
 4. 默认把新节点挂到当前 DAG 的尾节点后面
-5. 如果工作流原本是 `ONLINE`，会先下线、更新，再恢复上线
+5. 更新完成后会恢复到工作流原来的发布状态
 
 推荐 payload：
 
@@ -201,7 +201,7 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 - `task_name`: 新任务名，必填
 - `sql`: 新 SQL 文本，必填
 - `template_task_name`: 可选。建议显式指定一个现有 SQL 节点名，避免模板选择错误
-- `restore_online`: 可选，默认 `true`
+- `restore_original_state`: 可选，默认 `true`
 - `auto_offline`: 可选，默认 `true`
 - `sql_type`: 可选。查询通常传 `0`，非查询传 `1`
 

@@ -293,15 +293,15 @@ class DolphinSchedulerClient:
             workflow_code=workflow_code,
         )
 
-        current_release_state = str(
+        original_release_state = str(
             detail.get("releaseState")
             or detail.get("scheduleReleaseState")
             or detail.get("release_state")
             or ""
         ).upper()
-        should_restore_online = payload.get("restore_online", True)
+        restore_original_state = payload.get("restore_original_state", payload.get("restore_online", True))
         auto_offline = payload.get("auto_offline", True)
-        was_online = current_release_state == "ONLINE"
+        was_online = original_release_state == "ONLINE"
 
         if was_online and auto_offline:
             ok, offline_result = self.release_workflow(
@@ -326,16 +326,17 @@ class DolphinSchedulerClient:
             return False, update_result
 
         restore_result = None
-        if was_online and should_restore_online:
+        if was_online and restore_original_state:
             restore_ok, restore_result = self.release_workflow(
                 {"project_code": project_code, "workflow_code": workflow_code},
                 "ONLINE",
             )
             if not restore_ok:
                 return False, {
-                    "message": "workflow updated but failed to restore ONLINE state",
+                    "message": "workflow updated but failed to restore original release state",
                     "update_result": update_result,
                     "restore_result": restore_result,
+                    "original_release_state": original_release_state,
                 }
 
         return True, {
@@ -344,8 +345,8 @@ class DolphinSchedulerClient:
             "task_name": task_name,
             "task_code": new_task_code,
             "template_task_name": template.get("name"),
-            "was_online": was_online,
-            "restored_online": bool(was_online and should_restore_online),
+            "original_release_state": original_release_state,
+            "restored_original_state": bool(was_online and restore_original_state),
             "update_result": update_result,
             "restore_result": restore_result,
         }
