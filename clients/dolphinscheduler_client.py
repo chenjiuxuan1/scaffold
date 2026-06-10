@@ -23,6 +23,7 @@ class DolphinSchedulerClient:
         path: str,
         query: Dict[str, Any] | None = None,
         form: Dict[str, Any] | None = None,
+        json_body: Dict[str, Any] | None = None,
     ) -> Tuple[bool, Any]:
         query_string = ""
         if query:
@@ -42,6 +43,9 @@ class DolphinSchedulerClient:
                 {k: v for k, v in form.items() if v not in ("", None)}
             ).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
+        elif json_body is not None:
+            data = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
 
         request = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
 
@@ -163,6 +167,36 @@ class DolphinSchedulerClient:
         if endpoint in ("", "auto"):
             return "start-process-instance"
         return endpoint
+
+    def _execute_instance_action(
+        self,
+        payload: Dict[str, Any],
+        execute_type: str,
+        action_name: str,
+    ) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        instance_id = self._safe_int(payload.get("instance_id"))
+        if not project_code:
+            return False, {"message": f"{action_name} requires project_code"}
+        if instance_id <= 0:
+            return False, {"message": f"{action_name} requires instance_id"}
+
+        ok, result = self.request(
+            "POST",
+            f"/projects/{project_code}/executors/execute",
+            json_body={
+                "processInstanceId": instance_id,
+                "executeType": execute_type,
+            },
+        )
+        if not ok:
+            return False, result
+        return True, {
+            "project_code": project_code,
+            "instance_id": instance_id,
+            "execute_type": execute_type,
+            "result": result,
+        }
 
     def _resolve_start_code_field(self) -> str:
         field = (self.config.start_code_field or "auto").strip()
@@ -289,6 +323,13 @@ class DolphinSchedulerClient:
         return self.request(
             "GET",
             f"/projects/{project_code}/workflow-instances/{instance_id}",
+        )
+
+    def retry_instance(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        return self._execute_instance_action(
+            payload=payload,
+            execute_type="START_FAILURE_TASK_PROCESS",
+            action_name="retry_instance",
         )
 
     def append_sql_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
