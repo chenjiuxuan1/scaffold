@@ -86,6 +86,19 @@ class DolphinSchedulerClient:
             query=query,
         )
 
+    def list_schedules(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = payload.get("project_code") or self.config.project_code
+        query = {
+            "pageNo": payload.get("page_no", 1),
+            "pageSize": payload.get("page_size", 200),
+            "searchVal": payload.get("search_val", ""),
+        }
+        return self.request(
+            "GET",
+            f"/projects/{project_code}/schedules",
+            query=query,
+        )
+
     def get_workflow(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = payload.get("project_code") or self.config.project_code
         workflow_code = payload.get("workflow_code")
@@ -131,10 +144,14 @@ class DolphinSchedulerClient:
                 "timeout": workflow_meta.get("timeout"),
             },
             "counts": {
-                "task_definition_count": len(task_definitions),
-                "task_relation_count": len(task_relations),
-                "location_count": len(locations),
-            },
+            "task_definition_count": len(task_definitions),
+            "task_relation_count": len(task_relations),
+            "location_count": len(locations),
+        },
+            "schedule_summary": self._resolve_schedule_summary(
+                project_code=str(payload.get("project_code") or self.config.project_code).strip(),
+                workflow_detail=detail,
+            ),
             "task_definitions": task_definitions,
             "task_relations": task_relations,
             "locations": locations,
@@ -324,12 +341,12 @@ class DolphinSchedulerClient:
         )
 
         original_release_state = str(workflow_meta.get("releaseState") or "").upper()
-        original_schedule_release_state = str(
-            workflow_meta.get("scheduleReleaseState")
-            or detail.get("scheduleReleaseState")
-            or ""
-        ).upper()
-        original_schedule_id = self._get_schedule_id(detail)
+        schedule_summary = self._resolve_schedule_summary(
+            project_code=project_code,
+            workflow_detail=detail,
+        )
+        original_schedule_release_state = str(schedule_summary.get("release_state") or "").upper()
+        original_schedule_id = str(schedule_summary.get("schedule_id") or "").strip()
         restore_original_state = payload.get("restore_original_state", payload.get("restore_online", True))
         auto_offline = payload.get("auto_offline", True)
         was_online = original_release_state == "ONLINE"
@@ -402,6 +419,7 @@ class DolphinSchedulerClient:
             "original_release_state": original_release_state,
             "original_schedule_release_state": original_schedule_release_state,
             "schedule_id": original_schedule_id,
+            "schedule_summary": schedule_summary,
             "restored_original_state": bool(was_online and restore_original_state),
             "restored_original_schedule_state": bool(
                 was_schedule_online and restore_original_state and original_schedule_id
@@ -492,12 +510,12 @@ class DolphinSchedulerClient:
         )
 
         original_release_state = str(workflow_meta.get("releaseState") or "").upper()
-        original_schedule_release_state = str(
-            workflow_meta.get("scheduleReleaseState")
-            or detail.get("scheduleReleaseState")
-            or ""
-        ).upper()
-        original_schedule_id = self._get_schedule_id(detail)
+        schedule_summary = self._resolve_schedule_summary(
+            project_code=project_code,
+            workflow_detail=detail,
+        )
+        original_schedule_release_state = str(schedule_summary.get("release_state") or "").upper()
+        original_schedule_id = str(schedule_summary.get("schedule_id") or "").strip()
         restore_original_state = payload.get("restore_original_state", payload.get("restore_online", True))
         auto_offline = payload.get("auto_offline", True)
         was_online = original_release_state == "ONLINE"
@@ -572,6 +590,7 @@ class DolphinSchedulerClient:
             "original_release_state": original_release_state,
             "original_schedule_release_state": original_schedule_release_state,
             "schedule_id": original_schedule_id,
+            "schedule_summary": schedule_summary,
             "restored_original_state": bool(was_online and restore_original_state),
             "restored_original_schedule_state": bool(
                 was_schedule_online and restore_original_state and original_schedule_id
@@ -771,6 +790,143 @@ class DolphinSchedulerClient:
             value = str(candidate or "").strip()
             if value:
                 return value
+        return ""
+
+    def _resolve_schedule_summary(
+        self,
+        project_code: str,
+        workflow_detail: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        workflow_meta = self._get_workflow_meta(workflow_detail)
+        workflow_code = str(
+            workflow_meta.get("code")
+            or workflow_detail.get("code")
+            or workflow_detail.get("workflowDefinitionCode")
+            or ""
+        ).strip()
+        workflow_name = str(
+            workflow_meta.get("name")
+            or workflow_detail.get("name")
+            or workflow_detail.get("workflowDefinitionName")
+            or ""
+        ).strip()
+
+        # First try the workflow detail payload itself.
+        detail_release_state = str(
+            workflow_meta.get("scheduleReleaseState")
+            or workflow_detail.get("scheduleReleaseState")
+            or ""
+        ).strip()
+        detail_schedule_id = self._get_schedule_id(workflow_detail)
+        if detail_release_state or detail_schedule_id:
+            return {
+                "found": bool(detail_release_state or detail_schedule_id),
+                "source": "workflow_detail",
+                "schedule_id": detail_schedule_id,
+                "release_state": detail_release_state,
+                "crontab": self._extract_schedule_crontab(self._get_workflow_schedule(workflow_detail)),
+                "process_definition_code": workflow_code,
+                "process_definition_name": workflow_name,
+                "raw": self._get_workflow_schedule(workflow_detail),
+            }
+
+        # Fall back to the schedules list API, which is the real source of truth
+        # for some DS 3.4 deployments.
+        ok, result = self.request(
+            "GET",
+            f"/projects/{project_code}/schedules",
+            query={"pageNo": 1, "pageSize": 200},
+        )
+        if not ok:
+            return {
+                "found": False,
+                "source": "schedule_list_error",
+                "schedule_id": "",
+                "release_state": "",
+                "crontab": "",
+                "process_definition_code": workflow_code,
+                "process_definition_name": workflow_name,
+                "raw": result,
+            }
+
+        schedules = result.get("data", {}).get("totalList", [])
+        if not isinstance(schedules, list):
+            schedules = []
+
+        matched = self._match_schedule_record(
+            schedules=schedules,
+            workflow_code=workflow_code,
+            workflow_name=workflow_name,
+        )
+        if not matched:
+            return {
+                "found": False,
+                "source": "schedule_list",
+                "schedule_id": "",
+                "release_state": "",
+                "crontab": "",
+                "process_definition_code": workflow_code,
+                "process_definition_name": workflow_name,
+                "raw": None,
+            }
+
+        return {
+            "found": True,
+            "source": "schedule_list",
+            "schedule_id": str(matched.get("id") or matched.get("scheduleId") or "").strip(),
+            "release_state": str(matched.get("releaseState") or matched.get("scheduleReleaseState") or "").strip(),
+            "crontab": str(matched.get("crontab") or "").strip(),
+            "process_definition_code": str(
+                matched.get("processDefinitionCode")
+                or matched.get("workflowDefinitionCode")
+                or ""
+            ).strip(),
+            "process_definition_name": str(
+                matched.get("processDefinitionName")
+                or matched.get("workflowDefinitionName")
+                or ""
+            ).strip(),
+            "raw": matched,
+        }
+
+    def _match_schedule_record(
+        self,
+        schedules: list[Dict[str, Any]],
+        workflow_code: str,
+        workflow_name: str,
+    ) -> Dict[str, Any] | None:
+        normalized_code = str(workflow_code or "").strip()
+        normalized_name = str(workflow_name or "").strip()
+
+        for item in schedules:
+            process_code = str(
+                item.get("processDefinitionCode")
+                or item.get("workflowDefinitionCode")
+                or ""
+            ).strip()
+            if normalized_code and process_code == normalized_code:
+                return deepcopy(item)
+
+        for item in schedules:
+            process_name = str(
+                item.get("processDefinitionName")
+                or item.get("workflowDefinitionName")
+                or ""
+            ).strip()
+            if normalized_name and process_name == normalized_name:
+                return deepcopy(item)
+
+        return None
+
+    def _extract_schedule_crontab(self, schedule_value: Any) -> str:
+        if isinstance(schedule_value, dict):
+            return str(schedule_value.get("crontab") or "").strip()
+        if isinstance(schedule_value, list):
+            for item in schedule_value:
+                if isinstance(item, dict):
+                    value = str(item.get("crontab") or "").strip()
+                    if value:
+                        return value
         return ""
 
     def _extract_json_list(self, source: Dict[str, Any], *keys: str) -> list[Dict[str, Any]]:

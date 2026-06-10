@@ -9,6 +9,7 @@ def dispatch_action(client: DolphinSchedulerClient, action: str, payload: Dict[s
     handlers = {
         "list_projects": lambda: client.list_projects(payload),
         "list_workflows": lambda: client.list_workflows(payload),
+        "list_schedules": lambda: client.list_schedules(payload),
         "get_workflow": lambda: client.get_workflow(payload),
         "online_workflow": lambda: client.release_workflow(payload, "ONLINE"),
         "offline_workflow": lambda: client.release_workflow(payload, "OFFLINE"),
