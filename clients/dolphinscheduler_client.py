@@ -248,16 +248,26 @@ class DolphinSchedulerClient:
         )
 
     def append_sql_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        payload = {**payload, "task_type": payload.get("task_type") or "SQL"}
+        return self.append_task(payload)
+
+    def append_shell_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        payload = {**payload, "task_type": payload.get("task_type") or "SHELL"}
+        return self.append_task(payload)
+
+    def append_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = str(payload.get("project_code") or self.config.project_code).strip()
         workflow_code = str(payload.get("workflow_code") or "").strip()
         task_name = str(payload.get("task_name") or "").strip()
-        sql_text = str(payload.get("sql") or payload.get("raw_sql") or "").strip()
+        task_type = self._normalize_task_type(payload.get("task_type") or "SQL")
+        script_text = self._resolve_task_content(payload, task_type)
         if not workflow_code:
             return False, {"message": "workflow_code is required"}
         if not task_name:
             return False, {"message": "task_name is required"}
-        if not sql_text:
-            return False, {"message": "sql is required"}
+        if not script_text:
+            content_label = "sql" if task_type == "SQL" else "script"
+            return False, {"message": f"{content_label} is required"}
 
         ok, workflow_result = self.request(
             "GET",
@@ -278,21 +288,22 @@ class DolphinSchedulerClient:
             return False, {"message": f"task already exists: {task_name}"}
 
         template_name = str(payload.get("template_task_name") or "").strip()
-        template = self._find_template_task(task_definitions, template_name)
+        template = self._find_template_task(task_definitions, template_name, task_type)
         if not template:
             return False, {
-                "message": "no SQL task template found in workflow",
-                "hint": "set payload.template_task_name to an existing SQL task name in this workflow",
+                "message": f"no {task_type} task template found in workflow",
+                "hint": f"set payload.template_task_name to an existing {task_type} task name in this workflow",
             }
 
         new_task_code = self._next_code(
             [self._safe_int(item.get("code")) for item in task_definitions]
         )
-        new_task = self._build_sql_task_from_template(
+        new_task = self._build_task_from_template(
             template=template,
             task_name=task_name,
             task_code=new_task_code,
-            sql_text=sql_text,
+            task_type=task_type,
+            script_text=script_text,
             payload=payload,
         )
 
@@ -369,6 +380,7 @@ class DolphinSchedulerClient:
             "project_code": project_code,
             "task_name": task_name,
             "task_code": new_task_code,
+            "task_type": task_type,
             "template_task_name": template.get("name"),
             "original_release_state": original_release_state,
             "restored_original_state": bool(was_online and restore_original_state),
@@ -549,33 +561,35 @@ class DolphinSchedulerClient:
         self,
         task_definitions: Iterable[Dict[str, Any]],
         template_name: str,
+        task_type: str,
     ) -> Dict[str, Any] | None:
-        sql_tasks = [
-            item for item in task_definitions if str(item.get("taskType", "")).upper() == "SQL"
+        typed_tasks = [
+            item for item in task_definitions if str(item.get("taskType", "")).upper() == task_type
         ]
         if template_name:
-            for item in sql_tasks:
+            for item in typed_tasks:
                 if str(item.get("name", "")).strip() == template_name:
                     return deepcopy(item)
-        if sql_tasks:
-            return deepcopy(sql_tasks[0])
+        if typed_tasks:
+            return deepcopy(typed_tasks[0])
         for item in task_definitions:
             if item:
                 return deepcopy(item)
         return None
 
-    def _build_sql_task_from_template(
+    def _build_task_from_template(
         self,
         template: Dict[str, Any],
         task_name: str,
         task_code: int,
-        sql_text: str,
+        task_type: str,
+        script_text: str,
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         task = deepcopy(template)
         task["code"] = task_code
         task["name"] = task_name
-        task["taskType"] = "SQL"
+        task["taskType"] = task_type
         task["version"] = 1
         task["description"] = payload.get("task_description", task.get("description", ""))
         task.setdefault("flag", "YES")
@@ -593,14 +607,17 @@ class DolphinSchedulerClient:
         params.setdefault("conditionResult", {"successNode": [""], "failedNode": [""]})
         params.setdefault("waitStartTimeout", {})
         params.setdefault("switchResult", {})
-        params.setdefault("sqlType", self._infer_sql_type(sql_text))
-        if payload.get("sql_type") is not None:
-            params["sqlType"] = payload["sql_type"]
-        if payload.get("datasource") not in ("", None):
-            params["datasource"] = payload["datasource"]
-
-        sql_field = self._pick_first_existing_key(params, ["sql", "rawSql", "rawScript", "script"])
-        params[sql_field] = sql_text
+        if task_type == "SQL":
+            params.setdefault("sqlType", self._infer_sql_type(script_text))
+            if payload.get("sql_type") is not None:
+                params["sqlType"] = self._normalize_sql_type(payload["sql_type"])
+            if payload.get("datasource") not in ("", None):
+                params["datasource"] = payload["datasource"]
+            sql_field = self._pick_first_existing_key(params, ["sql", "rawSql", "rawScript", "script"])
+            params[sql_field] = script_text
+        else:
+            script_field = self._pick_first_existing_key(params, ["rawScript", "script", "rawSql", "sql"])
+            params[script_field] = script_text
 
         task["taskParams"] = params
         return task
@@ -725,6 +742,46 @@ class DolphinSchedulerClient:
             if prefix.startswith(keyword):
                 return 0
         return 1
+
+    def _normalize_sql_type(self, sql_type: Any) -> int:
+        if isinstance(sql_type, str):
+            normalized = sql_type.strip().lower()
+            aliases = {
+                "0": 0,
+                "query": 0,
+                "select": 0,
+                "read": 0,
+                "1": 1,
+                "non_query": 1,
+                "non-query": 1,
+                "update": 1,
+                "write": 1,
+                "execute": 1,
+            }
+            if normalized in aliases:
+                return aliases[normalized]
+        return self._safe_int(sql_type)
+
+    def _normalize_task_type(self, task_type: Any) -> str:
+        normalized = str(task_type or "SQL").strip().upper()
+        aliases = {
+            "SQL": "SQL",
+            "SHELL": "SHELL",
+            "COMMAND": "SHELL",
+            "SCRIPT": "SHELL",
+        }
+        return aliases.get(normalized, normalized)
+
+    def _resolve_task_content(self, payload: Dict[str, Any], task_type: str) -> str:
+        if task_type == "SQL":
+            return str(payload.get("sql") or payload.get("raw_sql") or payload.get("script") or "").strip()
+        return str(
+            payload.get("script")
+            or payload.get("raw_script")
+            or payload.get("shell")
+            or payload.get("command")
+            or ""
+        ).strip()
 
     def _safe_int(self, value: Any, default: int = 0) -> int:
         try:
