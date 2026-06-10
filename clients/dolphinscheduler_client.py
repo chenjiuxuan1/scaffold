@@ -466,9 +466,19 @@ class DolphinSchedulerClient:
         updated_task_definitions = deepcopy(task_definitions)
         updated_task_definitions.append(new_task)
 
+        upstream_codes = self._resolve_upstream_codes(
+            task_relations=task_relations,
+            task_definitions=task_definitions,
+            template_task=template,
+            payload=payload,
+        )
+        if not upstream_codes:
+            upstream_codes = [0]
+
         updated_locations = self._append_location(
             locations=locations,
             task_code=new_task_code,
+            upstream_codes=upstream_codes,
         )
         updated_relations = self._append_relations(
             task_relations=task_relations,
@@ -478,6 +488,7 @@ class DolphinSchedulerClient:
             workflow_code=workflow_code,
             template_task=template,
             payload=payload,
+            upstream_codes=upstream_codes,
         )
 
         original_release_state = str(workflow_meta.get("releaseState") or "").upper()
@@ -859,14 +870,43 @@ class DolphinSchedulerClient:
         self,
         locations: list[Dict[str, Any]],
         task_code: int,
+        upstream_codes: list[int] | None = None,
     ) -> list[Dict[str, Any]]:
         updated = deepcopy(locations)
-        last_x = 0
-        last_y = 120
-        for item in updated:
-            last_x = max(last_x, self._safe_int(item.get("x")))
-            last_y = max(last_y, self._safe_int(item.get("y")))
-        updated.append({"taskCode": task_code, "x": last_x + 220, "y": last_y})
+        upstream_codes = upstream_codes or []
+        location_by_code = {
+            self._safe_int(item.get("taskCode")): item
+            for item in updated
+            if self._safe_int(item.get("taskCode")) > 0
+        }
+
+        anchor = None
+        for upstream_code in upstream_codes:
+            if upstream_code > 0 and upstream_code in location_by_code:
+                anchor = location_by_code[upstream_code]
+                break
+
+        if anchor:
+            anchor_x = self._safe_int(anchor.get("x"))
+            anchor_y = self._safe_int(anchor.get("y"), 120)
+            sibling_count = sum(
+                1
+                for item in updated
+                if self._safe_int(item.get("x")) > anchor_x
+                and abs(self._safe_int(item.get("y")) - anchor_y) <= 220
+            )
+            new_x = anchor_x + 260
+            new_y = anchor_y + (sibling_count * 120)
+        else:
+            last_x = 0
+            last_y = 120
+            for item in updated:
+                last_x = max(last_x, self._safe_int(item.get("x")))
+                last_y = max(last_y, self._safe_int(item.get("y")))
+            new_x = last_x + 260
+            new_y = last_y + 120
+
+        updated.append({"taskCode": task_code, "x": new_x, "y": new_y})
         return updated
 
     def _append_relations(
@@ -878,12 +918,13 @@ class DolphinSchedulerClient:
         workflow_code: str,
         template_task: Dict[str, Any],
         payload: Dict[str, Any],
+        upstream_codes: list[int] | None = None,
     ) -> list[Dict[str, Any]]:
         updated = deepcopy(task_relations)
         existing_codes = [self._safe_int(item.get("code")) for item in updated]
         new_task_code = self._safe_int(new_task.get("code"))
 
-        upstream_codes = self._resolve_upstream_codes(
+        upstream_codes = upstream_codes or self._resolve_upstream_codes(
             task_relations=task_relations,
             task_definitions=task_definitions,
             template_task=template_task,
