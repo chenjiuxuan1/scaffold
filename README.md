@@ -25,6 +25,7 @@
 - `append_task`
 - `append_sql_task`
 - `append_shell_task`
+- `disable_tasks_except`
 - `delete_task`
 - `dump_workflow_graph`
 
@@ -218,6 +219,29 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 ```json
 {"project_code":"19427088052704","workflow_code":"174599383687393","task_name":"测试2","sql":"select 2","template_task_name":"dwd_okr_dashboard"}
 ```
+
+## 按白名单禁用任务
+
+`disable_tasks_except` 会读取当前工作流定义，并把命中目标范围、但不在保留白名单内的任务统一改成 `flag=NO`。
+
+推荐 payload：
+
+```json
+{
+  "project_code": "13068695921632",
+  "workflow_code": "13068714157024",
+  "target_task_name_prefixes": ["ods.", "ods_security.", "fox_ods.", "hive.ods.", "bi.fox_ods."],
+  "keep_task_names": ["ods.ods_dsp_third_data", "ods.ods_dsp_third_data_h"]
+}
+```
+
+说明：
+
+- `target_task_name_prefixes`: 可选。只处理这些前缀下的任务；不传则默认所有任务都进入候选范围
+- `keep_task_names`: 必填其一。白名单任务名
+- `keep_task_codes`: 必填其一。白名单任务 code
+- `restore_original_state`: 可选，默认 `true`
+- `auto_offline`: 可选，默认 `true`
 
 ## 导出工作流图结构
 

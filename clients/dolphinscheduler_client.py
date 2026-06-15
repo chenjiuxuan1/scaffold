@@ -340,6 +340,188 @@ class DolphinSchedulerClient:
         payload = {**payload, "task_type": payload.get("task_type") or "SHELL"}
         return self.append_task(payload)
 
+    def disable_tasks_except(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        if not workflow_code:
+            return False, {"message": "workflow_code is required"}
+
+        keep_task_names = {
+            str(item).strip()
+            for item in self._normalize_string_list(payload.get("keep_task_names"))
+            if str(item).strip()
+        }
+        keep_task_codes = {
+            self._safe_int(item)
+            for item in self._normalize_list(payload.get("keep_task_codes"))
+            if self._safe_int(item) > 0
+        }
+        if not keep_task_names and not keep_task_codes:
+            return False, {"message": "keep_task_names or keep_task_codes is required"}
+
+        target_task_name_prefixes = [
+            str(item).strip()
+            for item in self._normalize_string_list(
+                payload.get("target_task_name_prefixes") or payload.get("task_name_prefixes")
+            )
+            if str(item).strip()
+        ]
+
+        ok, workflow_result = self.request(
+            "GET",
+            f"/projects/{project_code}/workflow-definition/{workflow_code}",
+        )
+        if not ok:
+            return False, workflow_result
+
+        detail = self._unwrap_workflow_detail(workflow_result)
+        if not detail:
+            return False, {"message": "workflow detail payload is empty", "raw": workflow_result}
+
+        task_definitions = self._get_workflow_task_definitions(detail)
+        task_relations = self._get_workflow_task_relations(detail)
+        locations = self._get_workflow_locations(detail)
+        workflow_meta = self._get_workflow_meta(detail)
+
+        updated_task_definitions: list[Dict[str, Any]] = []
+        scoped_task_names: list[str] = []
+        kept_task_names: list[str] = []
+        disabled_task_names: list[str] = []
+        already_disabled_task_names: list[str] = []
+
+        for item in task_definitions:
+            cloned = deepcopy(item)
+            task_name = str(cloned.get("name") or "").strip()
+            task_code = self._safe_int(cloned.get("code"))
+            task_flag = str(cloned.get("flag") or "YES").strip().upper()
+
+            in_scope = self._task_matches_disable_scope(
+                task_name=task_name,
+                target_task_name_prefixes=target_task_name_prefixes,
+            )
+            if not in_scope:
+                updated_task_definitions.append(cloned)
+                continue
+
+            scoped_task_names.append(task_name)
+            if task_name in keep_task_names or task_code in keep_task_codes:
+                kept_task_names.append(task_name)
+                updated_task_definitions.append(cloned)
+                continue
+
+            if task_flag == "NO":
+                already_disabled_task_names.append(task_name)
+                updated_task_definitions.append(cloned)
+                continue
+
+            cloned["flag"] = "NO"
+            disabled_task_names.append(task_name)
+            updated_task_definitions.append(cloned)
+
+        if not scoped_task_names:
+            return False, {
+                "message": "no tasks matched disable scope",
+                "target_task_name_prefixes": target_task_name_prefixes,
+            }
+
+        original_release_state = str(workflow_meta.get("releaseState") or "").upper()
+        schedule_summary = self._resolve_schedule_summary(
+            project_code=project_code,
+            workflow_detail=detail,
+        )
+        original_schedule_release_state = str(schedule_summary.get("release_state") or "").upper()
+        original_schedule_id = str(schedule_summary.get("schedule_id") or "").strip()
+        restore_original_state = payload.get("restore_original_state", payload.get("restore_online", True))
+        auto_offline = payload.get("auto_offline", True)
+        was_online = original_release_state == "ONLINE"
+        was_schedule_online = original_schedule_release_state == "ONLINE"
+
+        if was_online and auto_offline:
+            ok, offline_result = self.release_workflow(
+                {"project_code": project_code, "workflow_code": workflow_code},
+                "OFFLINE",
+            )
+            if not ok:
+                return False, {
+                    "message": "failed to offline workflow before update",
+                    "detail": offline_result,
+                }
+
+        update_form = self._build_workflow_update_form(
+            workflow_detail=detail,
+            payload=payload,
+            task_definitions=updated_task_definitions,
+            task_relations=task_relations,
+            locations=locations,
+        )
+        ok, update_result = self._update_workflow_definition(project_code, workflow_code, update_form)
+        if not ok:
+            return False, update_result
+        if not self._is_ds_success(update_result):
+            return False, {
+                "message": "workflow update rejected by dolphinscheduler",
+                "result": update_result,
+            }
+
+        restore_result = None
+        if was_online and restore_original_state:
+            restore_ok, restore_result = self.release_workflow(
+                {"project_code": project_code, "workflow_code": workflow_code},
+                "ONLINE",
+            )
+            if not restore_ok:
+                return False, {
+                    "message": "workflow updated but failed to restore original release state",
+                    "update_result": update_result,
+                    "restore_result": restore_result,
+                    "original_release_state": original_release_state,
+                }
+
+        restore_schedule_result = None
+        if was_schedule_online and restore_original_state and original_schedule_id:
+            restore_schedule_ok, restore_schedule_result = self.release_schedule(
+                {"project_code": project_code},
+                original_schedule_id,
+                "ONLINE",
+            )
+            if not restore_schedule_ok:
+                return False, {
+                    "message": "workflow updated but failed to restore original schedule release state",
+                    "update_result": update_result,
+                    "restore_result": restore_result,
+                    "restore_schedule_result": restore_schedule_result,
+                    "original_release_state": original_release_state,
+                    "original_schedule_release_state": original_schedule_release_state,
+                    "schedule_id": original_schedule_id,
+                }
+
+        return True, {
+            "workflow_code": workflow_code,
+            "project_code": project_code,
+            "target_task_name_prefixes": target_task_name_prefixes,
+            "keep_task_names": sorted(keep_task_names),
+            "keep_task_codes": sorted(keep_task_codes),
+            "scoped_task_count": len(scoped_task_names),
+            "kept_task_count": len(kept_task_names),
+            "disabled_task_count": len(disabled_task_names),
+            "already_disabled_task_count": len(already_disabled_task_names),
+            "scoped_task_names": scoped_task_names,
+            "kept_task_names_matched": kept_task_names,
+            "disabled_task_names": disabled_task_names,
+            "already_disabled_task_names": already_disabled_task_names,
+            "original_release_state": original_release_state,
+            "original_schedule_release_state": original_schedule_release_state,
+            "schedule_id": original_schedule_id,
+            "schedule_summary": schedule_summary,
+            "restored_original_state": bool(was_online and restore_original_state),
+            "restored_original_schedule_state": bool(
+                was_schedule_online and restore_original_state and original_schedule_id
+            ),
+            "update_result": update_result,
+            "restore_result": restore_result,
+            "restore_schedule_result": restore_schedule_result,
+        }
+
     def delete_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = str(payload.get("project_code") or self.config.project_code).strip()
         workflow_code = str(payload.get("workflow_code") or "").strip()
@@ -817,6 +999,26 @@ class DolphinSchedulerClient:
             if normalized_name and str(item.get("name", "")).strip() == normalized_name:
                 return deepcopy(item)
         return None
+
+    def _task_matches_disable_scope(
+        self,
+        task_name: str,
+        target_task_name_prefixes: list[str],
+    ) -> bool:
+        normalized_name = str(task_name or "").strip()
+        if not target_task_name_prefixes:
+            return True
+        return any(normalized_name.startswith(prefix) for prefix in target_task_name_prefixes)
+
+    def _normalize_list(self, raw: Any) -> list[Any]:
+        if raw in (None, ""):
+            return []
+        if isinstance(raw, list):
+            return raw
+        return [raw]
+
+    def _normalize_string_list(self, raw: Any) -> list[str]:
+        return [str(item) for item in self._normalize_list(raw)]
 
     def _get_workflow_schedule(self, detail: Dict[str, Any]) -> Any:
         for source in (detail, detail.get("workflowDefinition") or {}):
