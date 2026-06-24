@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from copy import deepcopy
 from datetime import datetime
 import urllib.error
@@ -13,6 +14,15 @@ from gateway.models import CountryConfig
 
 
 class DolphinSchedulerClient:
+    RISKY_WORKFLOW_VARIABLES = {
+        "src",
+        "db",
+        "dt",
+        "full",
+        "partition",
+        "complement",
+    }
+
     def __init__(self, config: CountryConfig, ds_token: str) -> None:
         self.config = config
         self.ds_token = ds_token
@@ -365,6 +375,9 @@ class DolphinSchedulerClient:
         task_relations = self._get_workflow_task_relations(detail)
         locations = self._get_workflow_locations(detail)
         workflow_meta = self._get_workflow_meta(detail)
+        integrity_issue = self._detect_workflow_param_integrity_issue(detail, task_definitions)
+        if integrity_issue:
+            return False, integrity_issue
 
         target_task = self._find_task(task_definitions, task_name=task_name, task_code=task_code)
         if not target_task:
@@ -525,6 +538,9 @@ class DolphinSchedulerClient:
         task_relations = self._get_workflow_task_relations(detail)
         locations = self._get_workflow_locations(detail)
         workflow_meta = self._get_workflow_meta(detail)
+        integrity_issue = self._detect_workflow_param_integrity_issue(detail, task_definitions)
+        if integrity_issue:
+            return False, integrity_issue
 
         updated_task_definitions: list[Dict[str, Any]] = []
         scoped_task_names: list[str] = []
@@ -690,6 +706,9 @@ class DolphinSchedulerClient:
         task_relations = self._get_workflow_task_relations(detail)
         locations = self._get_workflow_locations(detail)
         workflow_meta = self._get_workflow_meta(detail)
+        integrity_issue = self._detect_workflow_param_integrity_issue(detail, task_definitions)
+        if integrity_issue:
+            return False, integrity_issue
 
         target_task = self._find_task(task_definitions, task_name=task_name, task_code=task_code)
         if not target_task:
@@ -838,6 +857,9 @@ class DolphinSchedulerClient:
         task_relations = self._get_workflow_task_relations(detail)
         locations = self._get_workflow_locations(detail)
         workflow_meta = self._get_workflow_meta(detail)
+        integrity_issue = self._detect_workflow_param_integrity_issue(detail, task_definitions)
+        if integrity_issue:
+            return False, integrity_issue
         if any(str(item.get("name", "")).strip() == task_name for item in task_definitions):
             return False, {"message": f"task already exists: {task_name}"}
 
@@ -1133,6 +1155,110 @@ class DolphinSchedulerClient:
             "locationsObj",
             "locationsObject",
         )
+
+    def _detect_workflow_param_integrity_issue(
+        self,
+        workflow_detail: Dict[str, Any],
+        task_definitions: list[Dict[str, Any]],
+    ) -> Dict[str, Any] | None:
+        workflow_global_names = self._extract_workflow_global_param_names(workflow_detail)
+        if workflow_global_names:
+            return None
+
+        unresolved_by_task: list[Dict[str, Any]] = []
+        for task in task_definitions:
+            task_name = str(task.get("name") or "").strip()
+            placeholders = self._extract_task_placeholders(task)
+            if not placeholders:
+                continue
+            local_names = self._extract_task_local_param_names(task)
+            unresolved = sorted(
+                name
+                for name in placeholders
+                if name in self.RISKY_WORKFLOW_VARIABLES and name not in local_names
+            )
+            if unresolved:
+                unresolved_by_task.append(
+                    {
+                        "task_name": task_name,
+                        "task_code": self._safe_int(task.get("code")),
+                        "missing_workflow_params": unresolved,
+                    }
+                )
+
+        if not unresolved_by_task:
+            return None
+
+        workflow_meta = self._get_workflow_meta(workflow_detail)
+        return {
+            "message": "workflow global params are empty but tasks still reference required workflow variables",
+            "workflow_name": workflow_meta.get("name"),
+            "workflow_code": str(workflow_meta.get("code") or workflow_detail.get("code") or "").strip(),
+            "required_workflow_params": sorted(
+                {
+                    name
+                    for item in unresolved_by_task
+                    for name in item["missing_workflow_params"]
+                }
+            ),
+            "affected_tasks": unresolved_by_task,
+            "hint": "restore workflow globalParams from t_ds_workflow_definition_log before mutating this workflow again",
+        }
+
+    def _extract_workflow_global_param_names(self, workflow_detail: Dict[str, Any]) -> set[str]:
+        workflow_meta = self._get_workflow_meta(workflow_detail)
+        names: set[str] = set()
+        normalized = self._normalize_json_value(
+            workflow_meta.get("globalParams"),
+            workflow_meta.get("globalParamList"),
+            workflow_detail.get("globalParams"),
+            workflow_detail.get("globalParamList"),
+            default=[],
+        )
+        if isinstance(normalized, list):
+            for item in normalized:
+                if isinstance(item, dict):
+                    prop = str(item.get("prop") or "").strip()
+                    if prop:
+                        names.add(prop)
+        for source in (workflow_meta.get("globalParamMap"), workflow_detail.get("globalParamMap")):
+            if isinstance(source, dict):
+                for key in source.keys():
+                    prop = str(key or "").strip()
+                    if prop:
+                        names.add(prop)
+        return names
+
+    def _extract_task_local_param_names(self, task_definition: Dict[str, Any]) -> set[str]:
+        names: set[str] = set()
+        task_params = task_definition.get("taskParams") or {}
+        if isinstance(task_params, dict):
+            for item in task_params.get("localParams") or []:
+                if isinstance(item, dict):
+                    prop = str(item.get("prop") or "").strip()
+                    if prop:
+                        names.add(prop)
+        for item in task_definition.get("taskParamList") or []:
+            if isinstance(item, dict):
+                prop = str(item.get("prop") or "").strip()
+                if prop:
+                    names.add(prop)
+        for key in (task_definition.get("taskParamMap") or {}).keys():
+            prop = str(key or "").strip()
+            if prop:
+                names.add(prop)
+        return names
+
+    def _extract_task_placeholders(self, task_definition: Dict[str, Any]) -> set[str]:
+        task_params = task_definition.get("taskParams") or {}
+        raw_script = ""
+        if isinstance(task_params, dict):
+            raw_script = str(task_params.get("rawScript") or task_params.get("sql") or "")
+        return {
+            str(match).strip()
+            for match in re.findall(r"\$\{([^}]+)\}", raw_script)
+            if str(match).strip()
+        }
 
     def _find_task(
         self,
