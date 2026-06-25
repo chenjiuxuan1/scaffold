@@ -484,23 +484,47 @@ class DolphinSchedulerClient:
         release_state: str,
     ) -> Tuple[bool, Any]:
         project_code = payload.get("project_code") or self.config.project_code
-        path = f"/projects/{project_code}/schedules/{schedule_id}/release"
         attempts = []
-        for method in ("POST", "GET", "PUT"):
+        normalized_release_state = str(release_state or "").strip().upper()
+        suffix = "online" if normalized_release_state == "ONLINE" else "offline"
+        candidate_requests = [
+            (
+                "POST",
+                f"/projects/{project_code}/schedules/{schedule_id}/{suffix}",
+                None,
+            ),
+            (
+                "POST",
+                f"/projects/{project_code}/schedules/{schedule_id}/release",
+                {"releaseState": normalized_release_state},
+            ),
+            (
+                "GET",
+                f"/projects/{project_code}/schedules/{schedule_id}/release",
+                {"releaseState": normalized_release_state},
+            ),
+            (
+                "PUT",
+                f"/projects/{project_code}/schedules/{schedule_id}/release",
+                {"releaseState": normalized_release_state},
+            ),
+        ]
+        for method, path, query in candidate_requests:
             ok, result = self.request(
                 method,
                 path,
-                query={"releaseState": release_state},
+                query=query,
             )
             if ok and self._is_ds_success(result):
                 return True, result
-            attempts.append({"method": method, "result": result})
+            attempts.append({"method": method, "path": path, "query": query, "result": result})
             status = result.get("status") if isinstance(result, dict) else None
             if status not in (405, 404):
                 break
         return False, {
             "message": "all schedule release attempts failed",
-            "path": path,
+            "schedule_id": str(schedule_id),
+            "release_state": normalized_release_state,
             "attempts": attempts,
         }
 
