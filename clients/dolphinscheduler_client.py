@@ -1679,6 +1679,60 @@ class DolphinSchedulerClient:
             or "default"
         ).strip()
         execution_type = str(payload.get("execution_type") or "PARALLEL").strip() or "PARALLEL"
+        bootstrap_task_name = str(payload.get("bootstrap_task_name") or "__bootstrap_shell__").strip()
+        bootstrap_script = str(
+            payload.get("bootstrap_script")
+            or payload.get("script")
+            or "echo ds_scheduler_bootstrap_ok"
+        ).strip()
+        bootstrap_task_code = self._next_code([])
+        bootstrap_relation_code = self._next_code([bootstrap_task_code])
+        bootstrap_task = {
+            "code": bootstrap_task_code,
+            "version": 1,
+            "name": bootstrap_task_name,
+            "description": "bootstrap shell task created by ds-scheduler create_workflow",
+            "taskType": "SHELL",
+            "taskParams": {
+                "localParams": [],
+                "resourceList": [],
+                "dependence": {},
+                "conditionResult": {"successNode": [""], "failedNode": [""]},
+                "waitStartTimeout": {},
+                "switchResult": {},
+                "rawScript": bootstrap_script,
+            },
+            "flag": "YES",
+            "taskPriority": "MEDIUM",
+            "workerGroup": self.config.worker_group,
+            "environmentCode": payload.get("environment_code") or self.config.environment_code or "",
+            "failRetryTimes": 0,
+            "failRetryInterval": 1,
+            "timeoutFlag": "CLOSE",
+            "timeoutNotifyStrategy": "",
+            "timeout": 0,
+            "delayTime": 0,
+            "taskGroupId": 0,
+            "taskGroupPriority": 0,
+            "cpuQuota": -1,
+            "memoryMax": -1,
+            "taskExecuteType": "BATCH",
+            "projectCode": self._safe_int(payload.get("project_code") or self.config.project_code),
+        }
+        bootstrap_relation = {
+            "name": "",
+            "code": bootstrap_relation_code,
+            "projectCode": self._safe_int(payload.get("project_code") or self.config.project_code),
+            "processDefinitionCode": 0,
+            "processDefinitionVersion": 1,
+            "preTaskCode": 0,
+            "preTaskVersion": 0,
+            "postTaskCode": bootstrap_task_code,
+            "postTaskVersion": 1,
+            "conditionType": 0,
+            "conditionParams": {},
+        }
+        bootstrap_locations = [{"taskCode": bootstrap_task_code, "x": 260, "y": 120}]
         full_form = {
             "name": workflow_name,
             "description": description,
@@ -1702,7 +1756,19 @@ class DolphinSchedulerClient:
         fallback_form = dict(minimal_form)
         fallback_form["globalParams"] = json.dumps(global_params, ensure_ascii=False)
         fallback_form["otherParamsJson"] = json.dumps({}, ensure_ascii=False)
+        bootstrap_form = {
+            "name": workflow_name,
+            "description": description,
+            "globalParams": json.dumps(global_params, ensure_ascii=False),
+            "locations": json.dumps(bootstrap_locations, ensure_ascii=False),
+            "timeout": timeout,
+            "tenantCode": tenant_code,
+            "taskRelationJson": json.dumps([bootstrap_relation], ensure_ascii=False),
+            "taskDefinitionJson": json.dumps([bootstrap_task], ensure_ascii=False),
+            "executionType": execution_type,
+        }
         return [
+            ("workflow_definition_bootstrap_shell", bootstrap_form),
             ("process_definition_minimal", minimal_form),
             ("process_definition_full_empty_graph", full_form),
             ("process_definition_other_params", fallback_form),
