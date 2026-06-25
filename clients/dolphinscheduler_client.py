@@ -634,7 +634,10 @@ class DolphinSchedulerClient:
                 lambda: self.request(
                     "GET",
                     "/log/detail",
-                    query={"taskInstanceId": task_instance_id},
+                    query={
+                        "taskInstanceId": task_instance_id,
+                        "skipLineNum": self._safe_int(payload.get("skip_line_num"), 0),
+                    },
                 ),
             ),
         ]
@@ -2502,6 +2505,7 @@ class DolphinSchedulerClient:
         payload: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         task = deepcopy(target_task)
+        original_task_type = self._normalize_task_type(task.get("taskType") or "")
         original_params = deepcopy(task.get("taskParams") or {})
         task_type = self._normalize_task_type(payload.get("task_type") or task.get("taskType") or "SQL")
         task["taskType"] = task_type
@@ -2526,14 +2530,32 @@ class DolphinSchedulerClient:
         params = deepcopy(task.get("taskParams") or {})
         if not isinstance(params, dict):
             params = {}
-        params.setdefault("localParams", [])
-        params.setdefault("resourceList", [])
-        params.setdefault("dependence", {})
-        params.setdefault("conditionResult", {"successNode": [""], "failedNode": [""]})
-        params.setdefault("waitStartTimeout", {})
-        params.setdefault("switchResult", {})
-
         script_text = self._resolve_task_content(payload, task_type)
+        if task_type == "SQL" and original_task_type != "SQL":
+            params = self._build_minimal_sql_task_params(
+                script_text=script_text or "select 1",
+                payload=payload,
+            )
+        params.setdefault("localParams", [])
+        if task_type == "SQL":
+            datasource_meta = self._resolve_datasource_meta(payload)
+            if datasource_meta and not params.get("type"):
+                params["type"] = str(datasource_meta.get("type") or "").strip().upper()
+            params.setdefault("sqlType", self._infer_sql_type(script_text or str(params.get("sql") or "")))
+            params.setdefault("title", "")
+            params.setdefault("receivers", "")
+            params.setdefault("receiversCc", "")
+            params.setdefault("showType", "TABLE")
+            params.setdefault("connParams", "")
+            params.setdefault("preStatements", [])
+            params.setdefault("postStatements", [])
+        else:
+            params.setdefault("resourceList", [])
+            params.setdefault("dependence", {})
+            params.setdefault("conditionResult", {"successNode": [""], "failedNode": [""]})
+            params.setdefault("waitStartTimeout", {})
+            params.setdefault("switchResult", {})
+
         if script_text:
             if task_type == "SQL":
                 sql_field = self._pick_first_existing_key(params, ["sql", "rawSql", "rawScript", "script"])
@@ -2966,6 +2988,9 @@ class DolphinSchedulerClient:
 
     def _is_ds_success(self, result: Any) -> bool:
         if not isinstance(result, dict):
+            return False
+        raw_value = result.get("raw")
+        if isinstance(raw_value, str) and self._looks_like_html_document(raw_value):
             return False
         if result.get("success") is False:
             return False
