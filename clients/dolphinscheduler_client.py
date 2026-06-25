@@ -954,6 +954,7 @@ class DolphinSchedulerClient:
                 "datasource": task_params.get("datasource"),
                 "sql_type": task_params.get("sqlType"),
                 "local_params": task_params.get("localParams"),
+                "resource_list": task_params.get("resourceList"),
                 "raw_script": task_params.get("rawScript"),
                 "sql": task_params.get("sql"),
                 "tenant_code": detail.get("tenantCode") or self.config.tenant_code,
@@ -1035,7 +1036,7 @@ class DolphinSchedulerClient:
         if not change_summary.get("changed_fields"):
             return False, {
                 "message": "nothing to update",
-                "hint": "provide sql/script/local_params/task_params_patch/task_description/datasource/sql_type/etc.",
+                "hint": "provide sql/script/local_params/resource_list/task_params_patch/task_description/datasource/sql_type/etc.",
                 "task_name": str(target_task.get("name") or "").strip(),
                 "task_code": self._safe_int(target_task.get("code")),
             }
@@ -2557,11 +2558,16 @@ class DolphinSchedulerClient:
             params.setdefault("postStatements", [])
             sql_field = self._pick_first_existing_key(params, ["sql", "rawSql", "rawScript", "script"])
             params[sql_field] = script_text
+            self._apply_sql_task_optional_fields(params, payload)
         else:
             script_field = self._pick_first_existing_key(params, ["rawScript", "script", "rawSql", "sql"])
             params[script_field] = script_text
 
-        task["taskParams"] = params
+        task["taskParams"] = self._apply_task_param_mutations(
+            params,
+            payload,
+            default_local_params=params.get("localParams") or [],
+        )
         return task
 
     def _build_minimal_sql_task_params(self, script_text: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2725,6 +2731,17 @@ class DolphinSchedulerClient:
                 replace=replace_local_params,
             )
 
+        if "resource_list" in payload or "resources" in payload:
+            resource_list = self._normalize_resource_list(
+                payload.get("resource_list", payload.get("resources"))
+            )
+            replace_resource_list = bool(payload.get("replace_resource_list", True))
+            updated["resourceList"] = self._merge_resource_list(
+                existing=updated.get("resourceList") or [],
+                incoming=resource_list,
+                replace=replace_resource_list,
+            )
+
         pre_statements = self._normalize_statement_list(payload.get("pre_statements"))
         if pre_statements is not None:
             updated["preStatements"] = pre_statements
@@ -2739,6 +2756,27 @@ class DolphinSchedulerClient:
                 updated[key] = deepcopy(value)
 
         return updated
+
+    def _normalize_resource_list(self, raw: Any) -> list[Any]:
+        if raw in (None, ""):
+            return []
+        if isinstance(raw, list):
+            normalized: list[Any] = []
+            for item in raw:
+                if isinstance(item, dict):
+                    normalized.append(deepcopy(item))
+                    continue
+                if isinstance(item, (int, float)):
+                    normalized.append(int(item))
+                    continue
+                text = str(item).strip()
+                if text:
+                    normalized.append(text)
+            return normalized
+        if isinstance(raw, dict):
+            return [deepcopy(raw)]
+        text = str(raw).strip()
+        return [text] if text else []
 
     def _normalize_local_params(self, raw: Any) -> list[Dict[str, Any]]:
         if raw in (None, "", []):
@@ -2800,6 +2838,26 @@ class DolphinSchedulerClient:
                 order.append(prop)
             merged_by_prop[prop] = deepcopy(source)
         return [merged_by_prop[prop] for prop in order]
+
+    def _merge_resource_list(
+        self,
+        existing: list[Any],
+        incoming: list[Any],
+        *,
+        replace: bool,
+    ) -> list[Any]:
+        if replace:
+            return deepcopy(incoming)
+
+        merged: list[Any] = []
+        seen: set[str] = set()
+        for source in list(existing or []) + list(incoming or []):
+            key = json.dumps(source, ensure_ascii=False, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(deepcopy(source))
+        return merged
 
     def _normalize_statement_list(self, raw: Any) -> list[str] | None:
         if raw is None:
