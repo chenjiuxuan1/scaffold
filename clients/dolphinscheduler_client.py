@@ -107,11 +107,160 @@ class DolphinSchedulerClient:
             "pageSize": payload.get("page_size", 200),
             "searchVal": payload.get("search_val", ""),
         }
-        return self.request(
+        ok, result = self.request(
             "GET",
             f"/projects/{project_code}/schedules",
             query=query,
         )
+        if not ok:
+            return ok, result
+
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        schedule_id = str(payload.get("schedule_id") or "").strip()
+        if not workflow_code and not schedule_id:
+            return True, result
+
+        total_list = result.get("data", {}).get("totalList", [])
+        if not isinstance(total_list, list):
+            total_list = []
+
+        filtered = []
+        for item in total_list:
+            item_schedule_id = str(item.get("id") or item.get("scheduleId") or "").strip()
+            item_workflow_code = str(
+                item.get("processDefinitionCode")
+                or item.get("workflowDefinitionCode")
+                or ""
+            ).strip()
+            if schedule_id and item_schedule_id != schedule_id:
+                continue
+            if workflow_code and item_workflow_code != workflow_code:
+                continue
+            filtered.append(item)
+
+        wrapped = deepcopy(result)
+        if isinstance(wrapped.get("data"), dict):
+            wrapped["data"]["totalList"] = filtered
+            wrapped["data"]["total"] = len(filtered)
+        return True, wrapped
+
+    def get_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        schedule_id = str(payload.get("schedule_id") or "").strip()
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        workflow_name = str(payload.get("workflow_name") or "").strip()
+
+        if schedule_id:
+            path = f"/projects/{project_code}/schedules/{schedule_id}"
+            attempts = []
+            for method in ("GET",):
+                ok, result = self.request(method, path)
+                if ok:
+                    return True, result
+                attempts.append({"method": method, "result": result})
+
+        ok, list_result = self.list_schedules(
+            {
+                "project_code": project_code,
+                "workflow_code": workflow_code,
+                "schedule_id": schedule_id,
+                "search_val": payload.get("search_val", ""),
+                "page_no": 1,
+                "page_size": 200,
+            }
+        )
+        if not ok:
+            return False, list_result
+
+        items = list_result.get("data", {}).get("totalList", [])
+        if not isinstance(items, list):
+            items = []
+        if schedule_id:
+            for item in items:
+                if str(item.get("id") or item.get("scheduleId") or "").strip() == schedule_id:
+                    return True, item
+        if workflow_code:
+            for item in items:
+                if str(item.get("processDefinitionCode") or item.get("workflowDefinitionCode") or "").strip() == workflow_code:
+                    return True, item
+        if workflow_name:
+            for item in items:
+                if str(item.get("processDefinitionName") or item.get("workflowDefinitionName") or "").strip() == workflow_name:
+                    return True, item
+        return False, {
+            "message": "schedule not found",
+            "project_code": project_code,
+            "schedule_id": schedule_id,
+            "workflow_code": workflow_code,
+            "workflow_name": workflow_name,
+        }
+
+    def create_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        if not project_code:
+            return False, {"message": "project_code is required"}
+        if not workflow_code:
+            return False, {"message": "workflow_code is required"}
+
+        form = self._build_schedule_form(payload, project_code=project_code, workflow_code=workflow_code)
+        return self.request("POST", f"/projects/{project_code}/schedules", form=form)
+
+    def update_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        schedule_id = self._resolve_schedule_id(payload)
+        if not schedule_id:
+            return False, {"message": "schedule_id or workflow_code is required"}
+        form = self._build_schedule_form(payload, project_code=project_code, workflow_code=workflow_code)
+        return self.request("PUT", f"/projects/{project_code}/schedules/{schedule_id}", form=form)
+
+    def online_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        schedule_id = self._resolve_schedule_id(payload)
+        if not schedule_id:
+            return False, {"message": "schedule_id or workflow_code is required"}
+        return self.release_schedule(payload, schedule_id, "ONLINE")
+
+    def offline_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        schedule_id = self._resolve_schedule_id(payload)
+        if not schedule_id:
+            return False, {"message": "schedule_id or workflow_code is required"}
+        return self.release_schedule(payload, schedule_id, "OFFLINE")
+
+    def schedule_blast_radius(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        ok, workflow_result = self.get_workflow(payload)
+        if not ok:
+            return False, workflow_result
+
+        detail = self._unwrap_workflow_detail(workflow_result)
+        schedule_summary = self._resolve_schedule_summary(project_code=project_code, workflow_detail=detail)
+        workflow_meta = self._get_workflow_meta(detail)
+        return True, {
+            "project_code": project_code,
+            "workflow_code": str(
+                payload.get("workflow_code")
+                or workflow_meta.get("code")
+                or detail.get("workflowDefinitionCode")
+                or ""
+            ).strip(),
+            "workflow_name": str(
+                workflow_meta.get("name")
+                or detail.get("workflowDefinitionName")
+                or ""
+            ).strip(),
+            "workflow_release_state": str(workflow_meta.get("releaseState") or "").strip(),
+            "schedule_summary": schedule_summary,
+            "blast_radius": {
+                "shared_parent_workflow_detected": False,
+                "shared_schedule_detected": False,
+                "manual_review_required": False,
+                "notes": [
+                    "schedule_blast_radius 当前基于 workflow detail 和 schedules 列表判断",
+                    "如涉及共享父工作流编排，仍建议人工复核 DAG 与上游触发链路",
+                ],
+            },
+        }
 
     def get_workflow(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = payload.get("project_code") or self.config.project_code
@@ -341,6 +490,74 @@ class DolphinSchedulerClient:
             execute_type="START_FAILURE_TASK_PROCESS",
             action_name="retry_instance",
         )
+
+    def list_datasources(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        query = {
+            "pageNo": payload.get("page_no", 1),
+            "pageSize": payload.get("page_size", 200),
+            "searchVal": payload.get("search_val", ""),
+        }
+        return self.request("GET", "/datasources", query=query)
+
+    def get_datasource(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        datasource_id = str(payload.get("datasource_id") or "").strip()
+        datasource = str(payload.get("datasource") or payload.get("datasource_name") or "").strip()
+
+        if datasource_id:
+            return self.request("GET", f"/datasources/{datasource_id}")
+
+        ok, result = self.list_datasources(payload)
+        if not ok:
+            return False, result
+        total_list = result.get("data", {}).get("totalList", [])
+        if not isinstance(total_list, list):
+            total_list = []
+        for item in total_list:
+            item_name = str(item.get("name") or item.get("datasourceName") or "").strip()
+            if datasource and item_name == datasource:
+                return True, item
+        return False, {"message": f"datasource not found: {datasource}"}
+
+    def extract_task_runtime_config(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        project_code = str(payload.get("project_code") or self.config.project_code).strip()
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        task_name = str(payload.get("task_name") or "").strip()
+        task_code = self._safe_int(payload.get("task_code"))
+        if not workflow_code:
+            return False, {"message": "workflow_code is required"}
+        if not task_name and task_code <= 0:
+            return False, {"message": "task_name or task_code is required"}
+
+        ok, workflow_result = self.get_workflow({"project_code": project_code, "workflow_code": workflow_code})
+        if not ok:
+            return False, workflow_result
+        detail = self._unwrap_workflow_detail(workflow_result)
+        task_definitions = self._get_workflow_task_definitions(detail)
+        task = self._find_task(task_definitions, task_name=task_name, task_code=task_code)
+        if not task:
+            return False, {"message": "task not found", "task_name": task_name, "task_code": task_code}
+        task_params = task.get("taskParams") or {}
+        return True, {
+            "project_code": project_code,
+            "workflow_code": workflow_code,
+            "task_code": self._safe_int(task.get("code")),
+            "task_name": str(task.get("name") or "").strip(),
+            "task_type": str(task.get("taskType") or "").strip(),
+            "flag": str(task.get("flag") or "").strip(),
+            "worker_group": task.get("workerGroup"),
+            "environment_code": task.get("environmentCode"),
+            "timeout": task.get("timeout"),
+            "task_params": task_params,
+            "runtime_config": {
+                "datasource": task_params.get("datasource"),
+                "sql_type": task_params.get("sqlType"),
+                "local_params": task_params.get("localParams"),
+                "raw_script": task_params.get("rawScript"),
+                "sql": task_params.get("sql"),
+                "tenant_code": detail.get("tenantCode") or self.config.tenant_code,
+                "environment_code": task.get("environmentCode") or self.config.environment_code,
+            },
+        }
 
     def append_sql_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         payload = {**payload, "task_type": payload.get("task_type") or "SQL"}
@@ -1419,6 +1636,60 @@ class DolphinSchedulerClient:
             ).strip(),
             "raw": matched,
         }
+
+    def _resolve_schedule_id(self, payload: Dict[str, Any]) -> str:
+        schedule_id = str(payload.get("schedule_id") or "").strip()
+        if schedule_id:
+            return schedule_id
+        workflow_code = str(payload.get("workflow_code") or "").strip()
+        workflow_name = str(payload.get("workflow_name") or "").strip()
+        if not workflow_code and not workflow_name:
+            return ""
+        ok, result = self.get_schedule(payload)
+        if not ok or not isinstance(result, dict):
+            return ""
+        return str(result.get("id") or result.get("scheduleId") or "").strip()
+
+    def _build_schedule_form(
+        self,
+        payload: Dict[str, Any],
+        *,
+        project_code: str,
+        workflow_code: str,
+    ) -> Dict[str, Any]:
+        schedule_value = payload.get("schedule_json")
+        if schedule_value in ("", None):
+            schedule_value = {
+                "startTime": str(payload.get("start_time") or "").strip(),
+                "endTime": str(payload.get("end_time") or "").strip(),
+                "crontab": str(payload.get("crontab") or "").strip(),
+                "timezoneId": str(payload.get("timezone_id") or payload.get("timezone") or "Asia/Shanghai").strip(),
+            }
+
+        process_instance_priority = str(
+            payload.get("process_instance_priority")
+            or payload.get("priority")
+            or "MEDIUM"
+        ).strip()
+
+        form = {
+            "processDefinitionCode": workflow_code,
+            "warningType": str(payload.get("warning_type") or "NONE").strip(),
+            "warningGroupId": str(payload.get("warning_group_id") or "0").strip(),
+            "failureStrategy": str(payload.get("failure_strategy") or "CONTINUE").strip(),
+            "processInstancePriority": process_instance_priority,
+            "workerGroup": str(payload.get("worker_group") or self.config.worker_group or "default").strip(),
+            "tenantCode": str(payload.get("tenant_code") or self.config.tenant_code or "default").strip(),
+            "releaseState": str(payload.get("release_state") or "").strip(),
+            "schedule": self._normalize_schedule_form_value(schedule_value),
+        }
+        environment_code = str(payload.get("environment_code") or self.config.environment_code or "").strip()
+        if environment_code:
+            form["environmentCode"] = environment_code
+        custom_params = payload.get("custom_params") or {}
+        if custom_params:
+            form["startParams"] = json.dumps(custom_params, ensure_ascii=False)
+        return form
 
     def _match_schedule_record(
         self,

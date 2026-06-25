@@ -12,6 +12,13 @@ from .models import CountryConfig, GatewayRequest
 SUPPORTED_ACTIONS = {
     "list_projects",
     "list_workflows",
+    "list_schedules",
+    "get_schedule",
+    "create_schedule",
+    "update_schedule",
+    "online_schedule",
+    "offline_schedule",
+    "schedule_blast_radius",
     "get_workflow",
     "online_workflow",
     "offline_workflow",
@@ -26,6 +33,9 @@ SUPPORTED_ACTIONS = {
     "disable_tasks_except",
     "delete_task",
     "dump_workflow_graph",
+    "list_datasources",
+    "get_datasource",
+    "extract_task_runtime_config",
 }
 
 

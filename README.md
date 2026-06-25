@@ -12,9 +12,17 @@
 - 目标机器只需要拉取这个项目，并提供本国 DS 网络访问能力
 - Codex 通过统一 webhook 请求调用调度能力
 
-## 第一版支持动作
+## 当前支持动作
 
+- `list_projects`
 - `list_workflows`
+- `list_schedules`
+- `get_schedule`
+- `create_schedule`
+- `update_schedule`
+- `online_schedule`
+- `offline_schedule`
+- `schedule_blast_radius`
 - `get_workflow`
 - `online_workflow`
 - `offline_workflow`
@@ -22,13 +30,16 @@
 - `list_instances`
 - `get_instance`
 - `retry_instance`
+- `dump_workflow_graph`
 - `append_task`
 - `append_sql_task`
 - `append_shell_task`
 - `disable_task`
 - `disable_tasks_except`
 - `delete_task`
-- `dump_workflow_graph`
+- `list_datasources`
+- `get_datasource`
+- `extract_task_runtime_config`
 
 ## 目录结构
 
@@ -169,7 +180,7 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 
 第一版建议：
 
-1. 先把 `scaffold` 部署到 6 个国家实际执行机
+1. 先把 `ds-scheduler-gateway` 部署到 6 个国家实际执行机
 2. 按国家校验 `countries.json` 中的 `environment_code` / `tenant_code`
 3. 在 n8n 中把每个国家分支接到对应跳板机命令
 4. 逐个国家先测 `list_workflows`
