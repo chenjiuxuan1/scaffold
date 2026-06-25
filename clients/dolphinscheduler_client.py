@@ -2720,9 +2720,10 @@ class DolphinSchedulerClient:
         default_local_params: list[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         updated = deepcopy(params)
-        local_params = self._normalize_local_params(
-            payload.get("local_params", payload.get("task_local_params"))
-        )
+        raw_local_params = payload.get("local_params")
+        if raw_local_params in (None, "", []):
+            raw_local_params = payload.get("task_local_params")
+        local_params = self._normalize_local_params(raw_local_params)
         if local_params:
             replace_local_params = bool(payload.get("replace_local_params", False))
             updated["localParams"] = self._merge_local_params(
