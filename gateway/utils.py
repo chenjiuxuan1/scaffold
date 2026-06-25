@@ -33,6 +33,7 @@ SUPPORTED_ACTIONS = {
     "append_shell_task",
     "update_task",
     "update_sql_task",
+    "update_shell_task",
     "disable_task",
     "disable_tasks_except",
     "delete_task",

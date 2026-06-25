@@ -774,6 +774,10 @@ class DolphinSchedulerClient:
         payload = {**payload, "task_type": payload.get("task_type") or "SQL"}
         return self.update_task(payload)
 
+    def update_shell_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        payload = {**payload, "task_type": payload.get("task_type") or "SHELL"}
+        return self.update_task(payload)
+
     def update_task(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = str(payload.get("project_code") or self.config.project_code).strip()
         workflow_code = str(payload.get("workflow_code") or "").strip()
