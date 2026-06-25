@@ -96,15 +96,9 @@ class DolphinSchedulerClient:
         if not workflow_name:
             return False, {"message": "workflow_name is required"}
 
-        form = self._build_workflow_create_form(payload)
-        ok, create_result = self._create_workflow_definition(project_code, form)
+        ok, create_result, create_attempt = self._create_workflow_definition(project_code, payload)
         if not ok:
             return False, create_result
-        if not self._is_ds_success(create_result):
-            return False, {
-                "message": "workflow create rejected by dolphinscheduler",
-                "result": create_result,
-            }
         workflow_code = self._extract_workflow_code(create_result)
         if not workflow_code:
             lookup_ok, workflow_result = self.get_workflow(
@@ -136,6 +130,7 @@ class DolphinSchedulerClient:
             "task_definition_count": 0,
             "task_relation_count": 0,
             "location_count": 0,
+            "create_attempt": create_attempt,
             "create_result": create_result,
         }
 
@@ -1647,21 +1642,31 @@ class DolphinSchedulerClient:
     def _create_workflow_definition(
         self,
         project_code: str,
-        form: Dict[str, Any],
-    ) -> Tuple[bool, Any]:
+        payload: Dict[str, Any],
+    ) -> Tuple[bool, Any, Dict[str, Any]]:
         paths = [
+            f"/projects/{project_code}/process-definition",
+            f"/projects/{project_code}/process-definitions",
             f"/projects/{project_code}/workflow-definition",
             f"/projects/{project_code}/workflow-definitions",
         ]
+        forms = self._build_workflow_create_forms(payload)
         attempts = []
         for path in paths:
-            ok, result = self.request("POST", path, form=form)
-            if ok:
-                return True, result
-            attempts.append({"path": path, "result": result})
-        return False, {"message": "all workflow create attempts failed", "attempts": attempts}
+            for form_label, form in forms:
+                ok, result = self.request("POST", path, form=form)
+                attempt = {
+                    "path": path,
+                    "form_label": form_label,
+                    "form_keys": sorted(form.keys()),
+                }
+                if ok and self._is_ds_success(result):
+                    return True, result, attempt
+                attempt["result"] = result
+                attempts.append(attempt)
+        return False, {"message": "all workflow create attempts failed", "attempts": attempts}, {}
 
-    def _build_workflow_create_form(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_workflow_create_forms(self, payload: Dict[str, Any]) -> list[tuple[str, Dict[str, Any]]]:
         workflow_name = str(payload.get("workflow_name") or "").strip()
         description = str(payload.get("description") or "").strip()
         global_params = self._normalize_json_value(payload.get("global_params"), default=[])
@@ -1674,7 +1679,7 @@ class DolphinSchedulerClient:
             or "default"
         ).strip()
         execution_type = str(payload.get("execution_type") or "PARALLEL").strip() or "PARALLEL"
-        return {
+        full_form = {
             "name": workflow_name,
             "description": description,
             "globalParams": json.dumps(global_params, ensure_ascii=False),
@@ -1685,6 +1690,23 @@ class DolphinSchedulerClient:
             "taskDefinitionJson": json.dumps([], ensure_ascii=False),
             "executionType": execution_type,
         }
+        minimal_form = {
+            "name": workflow_name,
+            "description": description,
+            "timeout": timeout,
+            "tenantCode": tenant_code,
+            "executionType": execution_type,
+        }
+        if global_params:
+            minimal_form["globalParams"] = json.dumps(global_params, ensure_ascii=False)
+        fallback_form = dict(minimal_form)
+        fallback_form["globalParams"] = json.dumps(global_params, ensure_ascii=False)
+        fallback_form["otherParamsJson"] = json.dumps({}, ensure_ascii=False)
+        return [
+            ("process_definition_minimal", minimal_form),
+            ("process_definition_full_empty_graph", full_form),
+            ("process_definition_other_params", fallback_form),
+        ]
 
     def _build_workflow_update_form(
         self,
