@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 from copy import deepcopy
 from datetime import datetime
 import urllib.error
@@ -305,7 +306,10 @@ class DolphinSchedulerClient:
                     "workflow_code": workflow_code,
                 }
             return False, {"message": "schedule_id or workflow_code is required"}
-        return self.release_schedule(payload, schedule_id, "ONLINE")
+        ok, result = self.release_schedule(payload, schedule_id, "ONLINE")
+        if not ok:
+            return False, result
+        return self._finalize_schedule_release(payload, schedule_id, "ONLINE", result)
 
     def offline_schedule(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         schedule_id = self._resolve_schedule_id(payload)
@@ -318,7 +322,10 @@ class DolphinSchedulerClient:
                     "workflow_code": workflow_code,
                 }
             return False, {"message": "schedule_id or workflow_code is required"}
-        return self.release_schedule(payload, schedule_id, "OFFLINE")
+        ok, result = self.release_schedule(payload, schedule_id, "OFFLINE")
+        if not ok:
+            return False, result
+        return self._finalize_schedule_release(payload, schedule_id, "OFFLINE", result)
 
     def schedule_blast_radius(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
         project_code = str(payload.get("project_code") or self.config.project_code).strip()
@@ -526,6 +533,60 @@ class DolphinSchedulerClient:
             "schedule_id": str(schedule_id),
             "release_state": normalized_release_state,
             "attempts": attempts,
+        }
+
+    def _finalize_schedule_release(
+        self,
+        payload: Dict[str, Any],
+        schedule_id: str | int,
+        release_state: str,
+        release_result: Any,
+    ) -> Tuple[bool, Any]:
+        wait_result = self._wait_for_schedule_release_state(
+            project_code=str(payload.get("project_code") or self.config.project_code).strip(),
+            schedule_id=str(schedule_id),
+            expected_release_state=str(release_state or "").strip().upper(),
+        )
+        return True, {
+            "schedule_id": str(schedule_id),
+            "release_state": str(release_state or "").strip().upper(),
+            "release_result": release_result,
+            **wait_result,
+        }
+
+    def _wait_for_schedule_release_state(
+        self,
+        *,
+        project_code: str,
+        schedule_id: str,
+        expected_release_state: str,
+        max_attempts: int = 8,
+        interval_seconds: float = 1.0,
+    ) -> Dict[str, Any]:
+        last_schedule = None
+        for attempt in range(1, max_attempts + 1):
+            ok, schedule = self.get_schedule(
+                {
+                    "project_code": project_code,
+                    "schedule_id": schedule_id,
+                }
+            )
+            if ok and isinstance(schedule, dict):
+                last_schedule = schedule
+                observed_state = str(schedule.get("releaseState") or schedule.get("scheduleReleaseState") or "").strip().upper()
+                if observed_state == expected_release_state:
+                    return {
+                        "consistency_confirmed": True,
+                        "consistency_attempts": attempt,
+                        "schedule": schedule,
+                    }
+            if attempt < max_attempts:
+                time.sleep(interval_seconds)
+        return {
+            "consistency_confirmed": False,
+            "consistency_attempts": max_attempts,
+            "schedule": last_schedule,
+            "warning": f"schedule release state did not converge to {expected_release_state} within wait window",
         }
 
     def trigger_workflow(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
