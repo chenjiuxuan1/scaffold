@@ -2526,6 +2526,15 @@ class DolphinSchedulerClient:
                 payload=payload,
             )
             return self._strip_task_server_fields(sql_task)
+        if task_type == "SHELL" and original_task_type != "SHELL":
+            shell_task = self._build_shell_task_definition(
+                template=template,
+                task_name=task_name,
+                task_code=task_code,
+                script_text=script_text,
+                payload=payload,
+            )
+            return self._strip_task_server_fields(shell_task)
         task["code"] = task_code
         task["name"] = task_name
         task["taskType"] = task_type
@@ -2584,6 +2593,66 @@ class DolphinSchedulerClient:
             default_local_params=params.get("localParams") or [],
         )
         return self._strip_task_server_fields(task)
+
+    def _build_shell_task_definition(
+        self,
+        template: Dict[str, Any],
+        task_name: str,
+        task_code: int,
+        script_text: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        template = deepcopy(template)
+        base_task: Dict[str, Any] = {
+            "code": task_code,
+            "version": 1,
+            "name": task_name,
+            "description": payload.get("task_description", template.get("description", "")),
+            "projectCode": self._safe_int(
+                payload.get("project_code") or template.get("projectCode") or self.config.project_code
+            ),
+            "userId": self._safe_int(template.get("userId"), 0) or template.get("userId"),
+            "taskType": "SHELL",
+            "taskParamList": [],
+            "taskParamMap": None,
+            "flag": template.get("flag", "YES"),
+            "taskPriority": template.get("taskPriority", "MEDIUM"),
+            "workerGroup": template.get("workerGroup", self.config.worker_group),
+            "environmentCode": (
+                payload.get("environment_code")
+                if payload.get("environment_code") not in ("", None)
+                else template.get("environmentCode", self.config.environment_code or -1)
+            ),
+            "failRetryTimes": self._safe_int(template.get("failRetryTimes"), 0),
+            "failRetryInterval": self._safe_int(template.get("failRetryInterval"), 1),
+            "timeoutFlag": template.get("timeoutFlag", "CLOSE"),
+            "timeoutNotifyStrategy": template.get("timeoutNotifyStrategy"),
+            "timeout": self._safe_int(template.get("timeout"), 0),
+            "delayTime": self._safe_int(template.get("delayTime"), 0),
+            "resourceIds": template.get("resourceIds"),
+            "taskGroupId": self._safe_int(template.get("taskGroupId"), 0),
+            "taskGroupPriority": self._safe_int(template.get("taskGroupPriority"), 0),
+            "cpuQuota": self._safe_int(template.get("cpuQuota"), -1),
+            "memoryMax": self._safe_int(template.get("memoryMax"), -1),
+            "taskExecuteType": template.get("taskExecuteType", "BATCH"),
+            "taskParams": {
+                "localParams": [],
+                "resourceList": [],
+                "dependence": {},
+                "conditionResult": {"successNode": [""], "failedNode": [""]},
+                "waitStartTimeout": {},
+                "switchResult": {},
+                "rawScript": script_text,
+                "preStatements": [],
+                "postStatements": [],
+            },
+        }
+        base_task["taskParams"] = self._apply_task_param_mutations(
+            base_task["taskParams"],
+            payload,
+            default_local_params=[],
+        )
+        return base_task
 
     def _build_sql_task_definition(
         self,
