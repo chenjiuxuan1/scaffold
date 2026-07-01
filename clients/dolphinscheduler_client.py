@@ -3245,33 +3245,33 @@ class DolphinSchedulerClient:
         prefix = sql_text.lstrip().lower()
         for keyword in ("select", "with", "show", "desc", "explain"):
             if prefix.startswith(keyword):
-                return "0"
-        return "1"
+                return "query"
+        return "non_query"
 
     def _normalize_sql_type(self, sql_type: Any) -> str:
         if isinstance(sql_type, str):
             normalized = sql_type.strip().lower()
             aliases = {
-                "0": "0",
-                "query": "0",
-                "select": "0",
-                "read": "0",
-                "查询": "0",
-                "1": "1",
-                "non_query": "1",
-                "non-query": "1",
-                "nonquery": "1",
-                "update": "1",
-                "write": "1",
-                "execute": "1",
-                "非查询": "1",
+                "0": "query",
+                "query": "query",
+                "select": "query",
+                "read": "query",
+                "查询": "query",
+                "1": "non_query",
+                "non_query": "non_query",
+                "non-query": "non_query",
+                "nonquery": "non_query",
+                "update": "non_query",
+                "write": "non_query",
+                "execute": "non_query",
+                "非查询": "non_query",
             }
             if normalized in aliases:
                 return aliases[normalized]
         normalized_int = self._safe_int(sql_type, -1)
         if normalized_int in (0, 1):
-            return str(normalized_int)
-        return "1"
+            return "query" if normalized_int == 0 else "non_query"
+        return "non_query"
 
     def _resolve_sql_task_datasource_value(
         self,
