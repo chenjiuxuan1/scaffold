@@ -2967,19 +2967,27 @@ class DolphinSchedulerClient:
         if not upstream_codes:
             upstream_codes = [0]
         skeleton = deepcopy(updated[0]) if updated else {}
+        workflow_version = self._resolve_workflow_relation_version(task_relations)
         for upstream_code in upstream_codes:
             relation = deepcopy(skeleton)
             relation["name"] = ""
             relation["projectCode"] = self._safe_int(project_code)
             relation["processDefinitionCode"] = self._safe_int(workflow_code)
+            relation["workflowDefinitionCode"] = self._safe_int(workflow_code)
+            relation["processDefinitionVersion"] = workflow_version
+            relation["workflowDefinitionVersion"] = workflow_version
             relation["preTaskCode"] = upstream_code
             relation["preTaskVersion"] = self._find_task_version(task_definitions, upstream_code)
             relation["postTaskCode"] = new_task_code
             relation["postTaskVersion"] = self._safe_int(new_task.get("version"), 1)
-            relation["conditionType"] = relation.get("conditionType", 0)
+            relation["conditionType"] = self._normalize_relation_condition_type(
+                relation.get("conditionType")
+            )
             relation["conditionParams"] = relation.get("conditionParams", {})
-            relation["code"] = self._next_code(existing_codes)
-            existing_codes.append(relation["code"])
+            relation.pop("id", None)
+            relation_code = self._next_code(existing_codes)
+            relation["code"] = relation_code
+            existing_codes.append(relation_code)
             updated.append(relation)
         return updated
 
@@ -3015,6 +3023,7 @@ class DolphinSchedulerClient:
         }
 
         skeleton = deepcopy(task_relations[0]) if task_relations else {}
+        workflow_version = self._resolve_workflow_relation_version(task_relations)
         for predecessor in predecessors:
             for successor in successors:
                 if predecessor == successor:
@@ -3026,14 +3035,21 @@ class DolphinSchedulerClient:
                 relation["name"] = ""
                 relation["projectCode"] = self._safe_int(project_code)
                 relation["processDefinitionCode"] = self._safe_int(workflow_code)
+                relation["workflowDefinitionCode"] = self._safe_int(workflow_code)
+                relation["processDefinitionVersion"] = workflow_version
+                relation["workflowDefinitionVersion"] = workflow_version
                 relation["preTaskCode"] = predecessor
                 relation["preTaskVersion"] = 1 if predecessor == 0 else self._find_task_version(task_definitions, predecessor)
                 relation["postTaskCode"] = successor
                 relation["postTaskVersion"] = self._find_task_version(task_definitions, successor)
-                relation["conditionType"] = relation.get("conditionType", 0)
+                relation["conditionType"] = self._normalize_relation_condition_type(
+                    relation.get("conditionType")
+                )
                 relation["conditionParams"] = relation.get("conditionParams", {})
-                relation["code"] = self._next_code(existing_codes)
-                existing_codes.append(relation["code"])
+                relation.pop("id", None)
+                relation_code = self._next_code(existing_codes)
+                relation["code"] = relation_code
+                existing_codes.append(relation_code)
                 existing_pairs.add(pair)
                 preserved_relations.append(relation)
 
@@ -3099,6 +3115,20 @@ class DolphinSchedulerClient:
             if key in source:
                 return key
         return keys[0]
+
+    def _resolve_workflow_relation_version(self, task_relations: list[Dict[str, Any]]) -> int:
+        for item in task_relations:
+            for key in ("workflowDefinitionVersion", "processDefinitionVersion"):
+                version = self._safe_int(item.get(key), 0)
+                if version > 0:
+                    return version
+        return 1
+
+    def _normalize_relation_condition_type(self, value: Any) -> Any:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+        return "NONE"
 
     def _infer_sql_type(self, sql_text: str) -> str:
         prefix = sql_text.lstrip().lower()
