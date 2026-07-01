@@ -2517,7 +2517,7 @@ class DolphinSchedulerClient:
     ) -> Dict[str, Any]:
         task = deepcopy(template)
         original_task_type = self._normalize_task_type(task.get("taskType") or "")
-        if task_type == "SQL":
+        if task_type == "SQL" and original_task_type != "SQL":
             sql_task = self._build_sql_task_definition(
                 template=template,
                 task_name=task_name,
