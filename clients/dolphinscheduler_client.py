@@ -2606,6 +2606,7 @@ class DolphinSchedulerClient:
             "projectCode": self._safe_int(
                 payload.get("project_code") or template.get("projectCode") or self.config.project_code
             ),
+            "userId": self._safe_int(template.get("userId"), 0) or template.get("userId"),
             "taskType": "SQL",
             "taskParamList": [],
             "taskParamMap": None,
