@@ -2517,7 +2517,7 @@ class DolphinSchedulerClient:
     ) -> Dict[str, Any]:
         task = deepcopy(template)
         original_task_type = self._normalize_task_type(task.get("taskType") or "")
-        if task_type == "SQL" and original_task_type != "SQL":
+        if task_type == "SQL":
             sql_task = self._build_sql_task_definition(
                 template=template,
                 task_name=task_name,
@@ -2701,52 +2701,59 @@ class DolphinSchedulerClient:
             "taskExecuteType": template.get("taskExecuteType", "BATCH"),
         }
 
-        params = self._build_minimal_sql_task_params(script_text=script_text, payload=payload)
-        for key in (
-            "resourceList",
-            "title",
-            "receivers",
-            "receiversCc",
-            "showType",
-            "connParams",
-            "preStatements",
-            "postStatements",
-            "displayRows",
-            "localParams",
-        ):
-            if key in template_params and key not in params:
-                params[key] = deepcopy(template_params[key])
+        params = self._build_minimal_sql_task_params(
+            script_text=script_text,
+            payload=payload,
+            template_params=template_params,
+        )
         params = self._apply_task_param_mutations(
             params,
             payload,
             default_local_params=params.get("localParams") or [],
         )
+        self._apply_sql_task_optional_fields(params, payload)
+        pre_statements = self._normalize_statement_list(payload.get("pre_statements"))
+        if pre_statements is not None:
+            params["preStatements"] = pre_statements
+        post_statements = self._normalize_statement_list(payload.get("post_statements"))
+        if post_statements is not None:
+            params["postStatements"] = post_statements
         base_task["taskParams"] = params
         return base_task
 
-    def _build_minimal_sql_task_params(self, script_text: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_minimal_sql_task_params(
+        self,
+        script_text: str,
+        payload: Dict[str, Any],
+        template_params: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        template_params = template_params or {}
         datasource_meta = self._resolve_datasource_meta(payload)
+        datasource_value = self._resolve_sql_task_datasource_value(
+            payload, datasource_meta=datasource_meta
+        )
+        if datasource_value in ("", None):
+            datasource_value = template_params.get("datasource")
+        datasource_type = str(
+            datasource_meta.get("type")
+            or payload.get("datasource_type")
+            or template_params.get("type")
+            or ""
+        ).strip().upper()
+        sql_type_value = (
+            self._normalize_sql_type(payload.get("sql_type"))
+            if payload.get("sql_type") not in ("", None)
+            else str(template_params.get("sqlType") or "").strip()
+        )
+        if not sql_type_value:
+            sql_type_value = self._infer_sql_type(script_text)
         params: Dict[str, Any] = {
-            "type": str(datasource_meta.get("type") or payload.get("datasource_type") or "").strip().upper(),
-            "datasource": self._resolve_sql_task_datasource_value(
-                payload, datasource_meta=datasource_meta
-            ),
+            "type": datasource_type,
+            "datasource": datasource_value,
             "sql": script_text,
-            "sqlType": self._normalize_sql_type(
-                payload.get("sql_type")
-                if payload.get("sql_type") not in ("", None)
-                else self._infer_sql_type(script_text)
-            ),
-            "localParams": [],
-            "resourceList": [],
-            "title": "",
-            "receivers": "",
-            "receiversCc": "",
-            "showType": "TABLE",
-            "connParams": "",
-            "preStatements": [],
-            "postStatements": [],
-            "displayRows": 10,
+            "sqlType": sql_type_value,
+            "localParams": deepcopy(template_params.get("localParams") or []),
+            "resourceList": deepcopy(template_params.get("resourceList") or []),
         }
         return params
 
