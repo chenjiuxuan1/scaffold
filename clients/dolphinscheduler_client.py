@@ -2542,13 +2542,16 @@ class DolphinSchedulerClient:
             params.setdefault("switchResult", {})
         if task_type == "SQL":
             datasource_meta = self._resolve_datasource_meta(payload)
-            if datasource_meta and not params.get("type"):
+            datasource_value = self._resolve_sql_task_datasource_value(
+                payload, datasource_meta=datasource_meta
+            )
+            if datasource_meta:
                 params["type"] = str(datasource_meta.get("type") or "").strip().upper()
             params.setdefault("sqlType", self._infer_sql_type(script_text))
-            if payload.get("sql_type") is not None:
+            if payload.get("sql_type") not in ("", None):
                 params["sqlType"] = self._normalize_sql_type(payload["sql_type"])
-            if payload.get("datasource") not in ("", None):
-                params["datasource"] = payload["datasource"]
+            if datasource_value not in ("", None):
+                params["datasource"] = datasource_value
             params.setdefault("title", "")
             params.setdefault("receivers", "")
             params.setdefault("receiversCc", "")
@@ -2574,9 +2577,15 @@ class DolphinSchedulerClient:
         datasource_meta = self._resolve_datasource_meta(payload)
         params: Dict[str, Any] = {
             "type": str(datasource_meta.get("type") or payload.get("datasource_type") or "").strip().upper(),
-            "datasource": payload.get("datasource"),
+            "datasource": self._resolve_sql_task_datasource_value(
+                payload, datasource_meta=datasource_meta
+            ),
             "sql": script_text,
-            "sqlType": self._normalize_sql_type(payload.get("sql_type", self._infer_sql_type(script_text))),
+            "sqlType": self._normalize_sql_type(
+                payload.get("sql_type")
+                if payload.get("sql_type") not in ("", None)
+                else self._infer_sql_type(script_text)
+            ),
             "title": "",
             "receivers": "",
             "receiversCc": "",
@@ -2648,7 +2657,10 @@ class DolphinSchedulerClient:
         params.setdefault("localParams", [])
         if task_type == "SQL":
             datasource_meta = self._resolve_datasource_meta(payload)
-            if datasource_meta and not params.get("type"):
+            datasource_value = self._resolve_sql_task_datasource_value(
+                payload, datasource_meta=datasource_meta
+            )
+            if datasource_meta:
                 params["type"] = str(datasource_meta.get("type") or "").strip().upper()
             params.setdefault("sqlType", self._infer_sql_type(script_text or str(params.get("sql") or "")))
             params.setdefault("title", "")
@@ -2671,9 +2683,9 @@ class DolphinSchedulerClient:
                 if str(params.get(sql_field) or "") != script_text:
                     params[sql_field] = script_text
                     changed_fields.append("sql")
-                if payload.get("sql_type") is not None:
+                if payload.get("sql_type") not in ("", None):
                     sql_type = self._normalize_sql_type(payload["sql_type"])
-                    if self._safe_int(params.get("sqlType"), -1) != sql_type:
+                    if self._normalize_sql_type(params.get("sqlType")) != sql_type:
                         params["sqlType"] = sql_type
                         changed_fields.append("sql_type")
                 self._apply_sql_task_optional_fields(params, payload)
@@ -2683,11 +2695,21 @@ class DolphinSchedulerClient:
                     params[script_field] = script_text
                     changed_fields.append("script")
 
-        if payload.get("datasource") not in ("", None):
-            datasource = payload["datasource"]
-            if params.get("datasource") != datasource:
-                params["datasource"] = datasource
+        datasource_meta = self._resolve_datasource_meta(payload) if task_type == "SQL" else {}
+        datasource_value = (
+            self._resolve_sql_task_datasource_value(payload, datasource_meta=datasource_meta)
+            if task_type == "SQL"
+            else None
+        )
+        if datasource_value not in ("", None):
+            if params.get("datasource") != datasource_value:
+                params["datasource"] = datasource_value
                 changed_fields.append("datasource")
+            if datasource_meta:
+                datasource_type = str(datasource_meta.get("type") or "").strip().upper()
+                if datasource_type and params.get("type") != datasource_type:
+                    params["type"] = datasource_type
+                    changed_fields.append("datasource_type")
 
         params = self._apply_task_param_mutations(params, payload, default_local_params=params.get("localParams") or [])
         if json.dumps(params, ensure_ascii=False, sort_keys=True) != json.dumps(
@@ -3078,31 +3100,61 @@ class DolphinSchedulerClient:
                 return key
         return keys[0]
 
-    def _infer_sql_type(self, sql_text: str) -> int:
+    def _infer_sql_type(self, sql_text: str) -> str:
         prefix = sql_text.lstrip().lower()
         for keyword in ("select", "with", "show", "desc", "explain"):
             if prefix.startswith(keyword):
-                return 0
-        return 1
+                return "0"
+        return "1"
 
-    def _normalize_sql_type(self, sql_type: Any) -> int:
+    def _normalize_sql_type(self, sql_type: Any) -> str:
         if isinstance(sql_type, str):
             normalized = sql_type.strip().lower()
             aliases = {
-                "0": 0,
-                "query": 0,
-                "select": 0,
-                "read": 0,
-                "1": 1,
-                "non_query": 1,
-                "non-query": 1,
-                "update": 1,
-                "write": 1,
-                "execute": 1,
+                "0": "0",
+                "query": "0",
+                "select": "0",
+                "read": "0",
+                "查询": "0",
+                "1": "1",
+                "non_query": "1",
+                "non-query": "1",
+                "nonquery": "1",
+                "update": "1",
+                "write": "1",
+                "execute": "1",
+                "非查询": "1",
             }
             if normalized in aliases:
                 return aliases[normalized]
-        return self._safe_int(sql_type)
+        normalized_int = self._safe_int(sql_type, -1)
+        if normalized_int in (0, 1):
+            return str(normalized_int)
+        return "1"
+
+    def _resolve_sql_task_datasource_value(
+        self,
+        payload: Dict[str, Any],
+        *,
+        datasource_meta: Dict[str, Any] | None = None,
+    ) -> Any:
+        datasource_meta = datasource_meta or {}
+        for key in ("id", "datasourceId"):
+            value = datasource_meta.get(key)
+            if value not in ("", None):
+                return self._safe_int(value, value)
+
+        datasource_id = payload.get("datasource_id")
+        if datasource_id not in ("", None):
+            return self._safe_int(datasource_id, datasource_id)
+
+        datasource = payload.get("datasource")
+        if isinstance(datasource, (int, float)):
+            return int(datasource)
+        datasource_text = str(datasource or "").strip()
+        if datasource_text.isdigit():
+            return int(datasource_text)
+        return datasource
 
     def _normalize_task_type(self, task_type: Any) -> str:
         normalized = str(task_type or "SQL").strip().upper()

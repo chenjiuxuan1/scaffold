@@ -288,7 +288,7 @@ ssh -p 36000 root@<pk-host> "cd /root/ds-scheduler-gateway && python3 scripts/ds
 - `upstream_task_code`: 可选。优先级高于 `upstream_task_name`
 - `restore_original_state`: 可选，默认 `true`
 - `auto_offline`: 可选，默认 `true`
-- `sql_type`: 可选。查询通常传 `0`，非查询传 `1`
+- `sql_type`: 可选。推荐传 `query` / `non_query`，旧的 `0` / `1` 仍兼容
 
 示例 base64 原文：
 
