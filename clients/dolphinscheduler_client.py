@@ -2574,7 +2574,7 @@ class DolphinSchedulerClient:
             payload,
             default_local_params=params.get("localParams") or [],
         )
-        return task
+        return self._strip_task_server_fields(task)
 
     def _build_minimal_sql_task_params(self, script_text: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         datasource_meta = self._resolve_datasource_meta(payload)
@@ -3127,6 +3127,21 @@ class DolphinSchedulerClient:
             if key in source:
                 return key
         return keys[0]
+
+    def _strip_task_server_fields(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = deepcopy(task)
+        for key in (
+            "id",
+            "createTime",
+            "updateTime",
+            "modifyBy",
+            "userName",
+            "projectName",
+            "operator",
+            "operateTime",
+        ):
+            cleaned.pop(key, None)
+        return cleaned
 
     def _resolve_workflow_relation_version(self, task_relations: list[Dict[str, Any]]) -> int:
         for item in task_relations:
