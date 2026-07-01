@@ -2552,13 +2552,10 @@ class DolphinSchedulerClient:
                 params["sqlType"] = self._normalize_sql_type(payload["sql_type"])
             if datasource_value not in ("", None):
                 params["datasource"] = datasource_value
-            params.setdefault("title", "")
-            params.setdefault("receivers", "")
-            params.setdefault("receiversCc", "")
-            params.setdefault("showType", "TABLE")
-            params.setdefault("connParams", "")
             params.setdefault("preStatements", [])
             params.setdefault("postStatements", [])
+            if "displayRows" not in params:
+                params["displayRows"] = 10
             sql_field = self._pick_first_existing_key(params, ["sql", "rawSql", "rawScript", "script"])
             params[sql_field] = script_text
             self._apply_sql_task_optional_fields(params, payload)
@@ -2586,14 +2583,10 @@ class DolphinSchedulerClient:
                 if payload.get("sql_type") not in ("", None)
                 else self._infer_sql_type(script_text)
             ),
-            "title": "",
-            "receivers": "",
-            "receiversCc": "",
-            "showType": "TABLE",
             "localParams": [],
-            "connParams": "",
             "preStatements": [],
             "postStatements": [],
+            "displayRows": 10,
         }
         return params
 
@@ -2663,13 +2656,10 @@ class DolphinSchedulerClient:
             if datasource_meta:
                 params["type"] = str(datasource_meta.get("type") or "").strip().upper()
             params.setdefault("sqlType", self._infer_sql_type(script_text or str(params.get("sql") or "")))
-            params.setdefault("title", "")
-            params.setdefault("receivers", "")
-            params.setdefault("receiversCc", "")
-            params.setdefault("showType", "TABLE")
-            params.setdefault("connParams", "")
             params.setdefault("preStatements", [])
             params.setdefault("postStatements", [])
+            if "displayRows" not in params:
+                params["displayRows"] = 10
         else:
             params.setdefault("resourceList", [])
             params.setdefault("dependence", {})
@@ -2732,8 +2722,12 @@ class DolphinSchedulerClient:
             "conn_params": "connParams",
         }
         for payload_key, params_key in field_mapping.items():
-            if payload.get(payload_key) is not None:
-                params[params_key] = payload.get(payload_key)
+            if payload_key not in payload:
+                continue
+            value = payload.get(payload_key)
+            if value in ("", None):
+                continue
+            params[params_key] = value
 
     def _apply_task_param_mutations(
         self,
