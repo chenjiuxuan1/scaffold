@@ -1234,15 +1234,6 @@ class DolphinSchedulerClient:
             return False, {
                 "message": "workflow update rejected by dolphinscheduler",
                 "result": update_result,
-                "debug": {
-                    "new_task": new_task,
-                    "new_task_params_keys": sorted((new_task.get("taskParams") or {}).keys()),
-                    "task_definition_count": len(updated_task_definitions),
-                    "relation_count": len(updated_relations),
-                    "location_count": len(updated_locations),
-                    "last_relations": updated_relations[-3:],
-                    "update_form_keys": sorted(update_form.keys()),
-                },
             }
 
         restore_result = None
